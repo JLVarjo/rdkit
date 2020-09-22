@@ -234,6 +234,7 @@ struct EmbedArgs {
   DistGeom::BoundsMatPtr mmat;
   DistGeom::VECT_CHIRALSET const *chiralCenters;
   DistGeom::VECT_CHIRALSET const *tetrahedralCarbons;
+  DistGeom::VECT_TORSIONSET const *doubleBondTorsions;
   ForceFields::CrystalFF::CrystalFFDetails *etkdgDetails;
 };
 }  // namespace detail
@@ -522,6 +523,40 @@ bool checkChiralCenters(const RDGeom::PointPtrVect *positions,
   }
   return true;
 }
+bool checkBondStereo(const RDGeom::PointPtrVect *positions,
+                     const detail::EmbedArgs &eargs,
+                     const EmbedParameters &embedParams) {
+  RDUNUSED_PARAM(embedParams);
+  // check marked torsions:
+  const RDGeom::PointPtrVect &pos = *positions;
+  for (const auto torSet : *eargs.doubleBondTorsions) {
+    RDGeom::Point3D p0((*pos[torSet->d_idx0])[0], (*pos[torSet->d_idx0])[1],
+                       (*pos[torSet->d_idx0])[2]);
+    RDGeom::Point3D p1((*pos[torSet->d_idx1])[0], (*pos[torSet->d_idx1])[1],
+                       (*pos[torSet->d_idx1])[2]);
+    RDGeom::Point3D p2((*pos[torSet->d_idx2])[0], (*pos[torSet->d_idx2])[1],
+                       (*pos[torSet->d_idx2])[2]);
+    RDGeom::Point3D p3((*pos[torSet->d_idx3])[0], (*pos[torSet->d_idx3])[1],
+                       (*pos[torSet->d_idx3])[2]);
+
+    double tor = RDGeom::computeDihedralAngle(p0, p1, p2, p3);
+
+	// Here the question is what should be the acceptance limit.
+	// Using PI/2, everything closer to correct one than the wrong one gets accepted,
+	// but angles close to 90 deg can still flip to wrong isomer in GO rather easily. 
+	// Let's try PI/4 = 45 deg for now, even though more iterations might be needed.
+    if (fabs(tor - torSet->getTorsion()) > M_PI / 4) {
+#ifdef DEBUG_EMBEDDING
+      std::cerr << " E/Z fail! (" << torSet->d_idx0 << "-" << torSet->d_idx1
+                << "-" << torSet->d_idx2 << "-" << torSet->d_idx3
+                << ") torsion: " << tor << " should be: " torSet->getTorsion()
+                << std::endl;
+#endif
+      return false;
+    }
+  }
+  return true;
+}
 bool minimizeFourthDimension(RDGeom::PointPtrVect *positions,
                              const detail::EmbedArgs &eargs,
                              const EmbedParameters &embedParams) {
@@ -752,6 +787,14 @@ bool embedPoints(RDGeom::PointPtrVect *positions, detail::EmbedArgs eargs,
         gotCoords =
             EmbeddingOps::finalChiralChecks(positions, eargs, embedParams);
       }
+      // test double bonds
+	  // TODO: make separate option for this, breaks some other tests now
+      if (embedParams.enforceChirality && gotCoords &&
+          (eargs.doubleBondTorsions->size() > 0)) {
+        gotCoords =
+            EmbeddingOps::checkBondStereo(positions, eargs, embedParams);
+      }
+
     }  // if(gotCoords)
   }    // while
   if (seed > -1) {
@@ -827,6 +870,84 @@ void findChiralSets(const ROMol &mol, DistGeom::VECT_CHIRALSET &chiralCenters,
     }    // if block - heavy atom check
   }      // for loop over atoms
 }  // end of _findChiralSets
+
+void findStereoBonds(const ROMol &mol,
+                        DistGeom::VECT_TORSIONSET &torsionSets,
+                        const std::map<int, RDGeom::Point3D> *coordMap) {
+  for (const auto &bond : mol.bonds()) {
+    const auto atomBeg = bond->getBeginAtom();
+    const auto atomEnd = bond->getEndAtom();
+    unsigned int idxBeg = atomBeg->getIdx();
+    unsigned int idxEnd = atomEnd->getIdx();
+
+    if (bond->getBondType()==Bond::DOUBLE) {
+      // find any bond with set direction from atomBeg
+      unsigned int idxBeg2 = std::numeric_limits<unsigned int>::max();
+      Bond::BondDir dirAtBeg = Bond::BondDir::NONE;
+      ROMol::ADJ_ITER nbrIdx, endNbrs;
+      boost::tie(nbrIdx, endNbrs) = mol.getAtomNeighbors(atomBeg);
+      for (; nbrIdx != endNbrs; ++nbrIdx) {
+        const Atom *nbr = mol.getAtomWithIdx(*nbrIdx);
+        if (nbr == atomEnd) 
+			continue;
+        const Bond *bond2 = mol.getBondBetweenAtoms(*nbrIdx, idxBeg);
+        Bond::BondDir bond2Dir = bond2->getBondDir();
+        if (bond2Dir == Bond::BondDir::ENDDOWNRIGHT ||
+            bond2Dir == Bond::BondDir::ENDUPRIGHT) {
+          idxBeg2 = *nbrIdx;
+          dirAtBeg = bond2Dir;
+          break;
+        }
+      }
+      // find any bond with set direction from atomEnd
+      unsigned int idxEnd2 = std::numeric_limits<unsigned int>::max();
+      Bond::BondDir dirAtEnd = Bond::BondDir::NONE;
+      boost::tie(nbrIdx, endNbrs) = mol.getAtomNeighbors(atomEnd);
+      for (; nbrIdx != endNbrs; ++nbrIdx) {
+        const Atom *nbr = mol.getAtomWithIdx(*nbrIdx);
+        if (nbr == atomBeg) 
+			continue;
+        const Bond *bond2 = mol.getBondBetweenAtoms(*nbrIdx, idxEnd);
+        Bond::BondDir bond2Dir = bond2->getBondDir();
+        if (bond2Dir == Bond::BondDir::ENDDOWNRIGHT ||
+            bond2Dir == Bond::BondDir::ENDUPRIGHT) {
+          idxEnd2 = *nbrIdx;
+          dirAtEnd = bond2Dir;
+          break;
+        }
+      }
+
+      if (idxBeg2 < std::numeric_limits<unsigned int>::max() &&
+          idxEnd2 < std::numeric_limits<unsigned int>::max()) {
+        // now determine if Beg2 and End2 are same side of the bond or not
+        const Bond *bondBeg = mol.getBondBetweenAtoms(idxBeg, idxBeg2);
+        bool begDown = bondBeg->getBeginAtomIdx() == idxBeg
+                           ? (dirAtBeg == Bond::BondDir::ENDDOWNRIGHT)
+                           : (dirAtBeg != Bond::BondDir::ENDDOWNRIGHT);
+        const Bond *bondEnd = mol.getBondBetweenAtoms(idxEnd, idxEnd2);
+        bool endDown = bondEnd->getBeginAtomIdx() == idxEnd
+                           ? (dirAtEnd == Bond::BondDir::ENDDOWNRIGHT)
+                           : (dirAtEnd != Bond::BondDir::ENDDOWNRIGHT);
+        if (begDown == endDown) {
+          // same side: torsion idxBeg2-idxBeg=idxEnd-idxEnd2 should be 0
+          // degrees
+          auto *tset =
+              new DistGeom::TorsionSet(idxBeg2, idxBeg, idxEnd, idxEnd2, 0.0);
+          DistGeom::TorsionSetPtr tptr(tset);
+          torsionSets.push_back(tptr);
+
+        } else {
+          // different side: torsion idxBeg2-idxBeg=idxEnd-idxEnd2 should be 180
+          // degrees
+          auto *tset =
+              new DistGeom::TorsionSet(idxBeg2, idxBeg, idxEnd, idxEnd2, M_PI);
+          DistGeom::TorsionSetPtr tptr(tset);
+          torsionSets.push_back(tptr);
+        }
+      }
+    } //end of bond is stereobond condition
+  } // end of bond loop
+}  // end of _findStereoBonds
 
 void adjustBoundsMatFromCoordMap(
     DistGeom::BoundsMatPtr mmat, unsigned int nAtoms,
@@ -1136,6 +1257,9 @@ void EmbedMultipleConfs(ROMol &mol, INT_VECT &res, unsigned int numConfs,
     EmbeddingOps::findChiralSets(*piece, chiralCenters, tetrahedralCarbons,
                                  coordMap);
 
+    DistGeom::VECT_TORSIONSET torsionSets;
+    EmbeddingOps::findStereoBonds(*piece, torsionSets, coordMap);
+
     // if we have any chiral centers or are using random coordinates, we will
     // first embed the molecule in four dimensions, otherwise we will use 3D
     bool fourD = false;
@@ -1146,8 +1270,9 @@ void EmbedMultipleConfs(ROMol &mol, INT_VECT &res, unsigned int numConfs,
 
     // do the embedding, using multiple threads if requested
     detail::EmbedArgs eargs = {
-        &confsOk, fourD,          &fragMapping,        &confs,       fragIdx,
-        mmat,     &chiralCenters, &tetrahedralCarbons, &etkdgDetails};
+        &confsOk,        fourD,        &fragMapping,   &confs,
+        fragIdx,         mmat,         &chiralCenters, &tetrahedralCarbons,
+        &torsionSets, &etkdgDetails};
     if (numThreads == 1) {
       detail::embedHelper_(0, 1, &eargs, &params);
     }

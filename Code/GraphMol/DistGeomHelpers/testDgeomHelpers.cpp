@@ -2278,6 +2278,34 @@ void testGithub3019() {
   }
 }
 
+void testGithub1852() {
+  {
+    std::string smi = "C/1=C\\CCCCCCCCCC1";
+    RWMol *mol = SmilesToMol(smi);
+    MolOps::addHs(*mol);
+    // test with default call (needs more iterations)
+    int cid = DGeomHelpers::EmbedMolecule(*mol, 100, 1);
+    TEST_ASSERT(cid > -1);
+    MolOps::removeStereochemistry(*mol);
+    MolOps::assignStereochemistryFrom3D(*mol, cid, true);
+    TEST_ASSERT(mol->getBondWithIdx(0)->getStereo() ==
+                Bond::BondStereo::STEREOE);
+    delete mol;
+
+    // test with ETKDGv2 parameters as in github issue
+    mol = SmilesToMol(smi);
+    MolOps::addHs(*mol);
+    DGeomHelpers::EmbedParameters params(DGeomHelpers::ETKDGv2);
+    cid = DGeomHelpers::EmbedMolecule(*mol, params);
+    TEST_ASSERT(cid > -1);
+    MolOps::removeStereochemistry(*mol);
+    MolOps::assignStereochemistryFrom3D(*mol, cid, true);
+    TEST_ASSERT(mol->getBondWithIdx(0)->getStereo() ==
+                Bond::BondStereo::STEREOE);
+    delete mol;
+  }
+}
+
 int main() {
   RDLog::InitLogs();
   BOOST_LOG(rdInfoLog)
@@ -2471,6 +2499,12 @@ int main() {
   BOOST_LOG(rdInfoLog) << "\t---------------------------------\n";
   BOOST_LOG(rdInfoLog) << "\t Disabling fragmentation.\n";
   testDisableFragmentation();
+
+  BOOST_LOG(rdInfoLog) << "\t---------------------------------\n";
+  BOOST_LOG(rdInfoLog) << "\t Github #1852: EmbedMolecule not respecting "
+                          "double-bond stereochemistry in rings\n";
+  testGithub1852();
+
 #endif
 
 #ifdef EXECUTE_LONG_TESTS

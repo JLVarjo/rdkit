@@ -33,6 +33,7 @@ ROMol *renumberAtoms(const ROMol &mol,
   // newOrder[i] : which atom should be in position i of the new mol
   // revOrder[i] : where atom i of the original mol landed in the new mol
   auto *res = new RWMol();
+  res->updateProps(mol);
 
   // copy over the atoms:
   for (unsigned int nIdx = 0; nIdx < nAts; ++nIdx) {

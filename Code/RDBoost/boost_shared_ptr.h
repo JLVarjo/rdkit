@@ -54,8 +54,8 @@ inline NB_NOINLINE boost::shared_ptr<T> boost_shared_from_python(
 
 inline NB_NOINLINE void boost_shared_from_cpp(boost::shared_ptr<void> &&ptr,
                                               PyObject *o) noexcept {
-  keep_alive(o, new boost::shared_ptr<void>(std::move(ptr)),
-             [](void *p) noexcept { delete (boost::shared_ptr<void> *)p; });
+  keep_alive_cb(o, new boost::shared_ptr<void>(std::move(ptr)),
+                [](void *p) noexcept { delete (boost::shared_ptr<void> *)p; });
 }
 
 template <typename T>
@@ -108,15 +108,12 @@ struct type_caster<boost::shared_ptr<T>> {
         !std::is_base_of_v<std::false_type, type_hook<Td>>;
     if constexpr (has_type_hook) type = type_hook<Td>::get(ptr);
 
-    if constexpr (!std::is_polymorphic_v<Td>) {
-      result = nb_type_put(type, ptr, rv_policy::reference, cleanup, &is_new);
-    } else {
-      const std::type_info *type_p =
-          (!has_type_hook && ptr) ? &typeid(*ptr) : nullptr;
+    const std::type_info *type_p = nullptr;
+    if constexpr (std::is_polymorphic_v<Td>)
+      type_p = (!has_type_hook && ptr) ? &typeid(*ptr) : nullptr;
 
-      result = nb_type_put_p(type, type_p, ptr, rv_policy::reference, cleanup,
-                             &is_new);
-    }
+    result = nb_type_put(::nanobind::detail::internals, type, type_p, ptr,
+                         rv_policy::reference, cleanup, &is_new);
 
     if (is_new) {
       boost::shared_ptr<void> pp;

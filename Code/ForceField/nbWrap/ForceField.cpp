@@ -326,7 +326,7 @@ while the list contains Snapshot objects.)DOC")
                                              mmffBondStretchParams.kb,
                                              mmffBondStretchParams.r0));
             }
-            return nb::none();
+            return nb::object(nb::none());
           },
           "mol"_a, "idx1"_a, "idx2"_a,
           "Retrieves MMFF bond stretch parameters for atoms with indexes "
@@ -345,7 +345,7 @@ while the list contains Snapshot objects.)DOC")
                                              mmffAngleBendParams.ka,
                                              mmffAngleBendParams.theta0));
             }
-            return nb::none();
+            return nb::object(nb::none());
           },
           "mol"_a, "idx1"_a, "idx2"_a, "idx3"_a,
           "Retrieves MMFF angle bend parameters for atoms with indexes idx1, "
@@ -368,7 +368,7 @@ while the list contains Snapshot objects.)DOC")
                                              mmffStretchBendParams.kbaIJK,
                                              mmffStretchBendParams.kbaKJI));
             }
-            return nb::none();
+            return nb::object(nb::none());
           },
           "mol"_a, "idx1"_a, "idx2"_a, "idx3"_a,
           "Retrieves MMFF stretch-bend parameters for atoms with indexes "
@@ -388,7 +388,7 @@ while the list contains Snapshot objects.)DOC")
                                              mmffTorsionParams.V2,
                                              mmffTorsionParams.V3));
             }
-            return nb::none();
+            return nb::object(nb::none());
           },
           "mol"_a, "idx1"_a, "idx2"_a, "idx3"_a, "idx4"_a,
           "Retrieves MMFF torsion parameters for atoms with indexes idx1, "
@@ -405,7 +405,7 @@ while the list contains Snapshot objects.)DOC")
                                           mmffOopBendParams)) {
               return nb::cast(mmffOopBendParams.koop);
             }
-            return nb::none();
+            return nb::object(nb::none());
           },
           "mol"_a, "idx1"_a, "idx2"_a, "idx3"_a, "idx4"_a,
           "Retrieves MMFF out-of-plane bending force constant for atoms with "
@@ -421,7 +421,7 @@ while the list contains Snapshot objects.)DOC")
                                              mmffVdWParams.R_ij_star,
                                              mmffVdWParams.epsilon));
             }
-            return nb::none();
+            return nb::object(nb::none());
           },
           "idx1"_a, "idx2"_a,
           "Retrieves MMFF van der Waals parameters for atoms with indexes "

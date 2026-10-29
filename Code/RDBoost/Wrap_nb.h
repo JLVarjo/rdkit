@@ -139,7 +139,7 @@ struct returns_references_to {
       throw std::runtime_error("return value should be a sequence");
     }
     for (nb::handle nurse : ret) {
-      nb::detail::keep_alive(nurse.ptr(), args[I - 1]);
+      nb::keep_alive_obj(nurse.ptr(), args[I - 1]);
     }
   }
 };

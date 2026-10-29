@@ -378,7 +378,7 @@ if(RDK_BUILD_NANOBIND_WRAPPERS)
   execute_process(
     COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
     OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
-  find_package(nanobind 2 CONFIG REQUIRED)
+  find_package(nanobind 3 CONFIG REQUIRED)
 
   if(nanobind_VERSION GREATER_EQUAL 2.13.0)
     target_compile_definitions(rdkit_py_base INTERFACE "-DNANOBIND_POOLED_AVAILABLE")

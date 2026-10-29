@@ -35,7 +35,6 @@
 #include <RDBoost/PySequenceHolder.h>
 #include <RDBoost/Wrap.h>
 #include <RDBoost/python_streambuf.h>
-#include <GraphMol/Chirality.h>
 #include <GraphMol/SmilesParse/CanonicalizeStereoGroups.h>
 
 #include <sstream>
@@ -307,9 +306,7 @@ ROMol *addHs2(const ROMol &orig, MolOps::AddHsParameters params,
   if (onlyOnAtoms) {
     onlyOn = pythonObjectToVect(onlyOnAtoms, orig.getNumAtoms());
   }
-  auto res = std::make_unique<RWMol>(orig);
-  MolOps::addHs(*res, params, onlyOn.get());
-  return static_cast<ROMol *>(res.release());
+  return MolOps::addHs(orig, params, onlyOn.get());
 }
 
 ROMol *addHs(const ROMol &orig, bool explicitOnly, bool addCoords,
@@ -425,16 +422,6 @@ MolOps::SanitizeFlags sanitizeMol(ROMol &mol, boost::uint64_t sanitizeOps,
   return static_cast<MolOps::SanitizeFlags>(operationThatFailed);
 }
 
-RWMol *getEditable(const ROMol &mol) {
-  auto *res = new RWMol(mol, false);
-  return res;
-}
-
-ROMol *getNormal(const RWMol &mol) {
-  auto *res = static_cast<ROMol *>(new RWMol(mol));
-  return res;
-}
-
 void kekulizeMol(ROMol &mol, bool clearAromaticFlags = false,
                  bool canonical = true) {
   auto &wmol = static_cast<RWMol &>(mol);
@@ -497,9 +484,12 @@ void cleanupAtropisomersMol(ROMol &mol) {
 }
 
 VECT_INT_VECT getSymmSSSR(ROMol &mol, bool includeDativeBonds,
-                          bool includeHydrogenBonds) {
+                          bool includeHydrogenBonds,
+                          MolOps::SymmetrizeSSSRAlgorithm algorithm,
+                          bool recalcSSSR) {
   VECT_INT_VECT rings;
-  MolOps::symmetrizeSSSR(mol, rings, includeDativeBonds, includeHydrogenBonds);
+  MolOps::symmetrizeSSSR(mol, rings, algorithm, recalcSSSR, includeDativeBonds,
+                         includeHydrogenBonds);
   return rings;
 }
 PyObject *getDistanceMatrix(ROMol &mol, bool useBO = false,
@@ -597,8 +587,8 @@ python::tuple GetMolFragsWithMapping(
     auto &fragsList = reinterpret_cast<python::list &>(frags);
     auto &fragsMolAtomMappingList =
         reinterpret_cast<python::list &>(fragsMolAtomMapping);
-    bool hasFrags = fragsList != python::object();
-    bool hasFragsMolAtomMapping = fragsMolAtomMappingList != python::object();
+    bool hasFrags = !fragsList.is_none();
+    bool hasFragsMolAtomMapping = !fragsMolAtomMappingList.is_none();
     molFrags =
         hasFrags || hasFragsMolAtomMapping
             ? MolOps::getMolFrags(
@@ -716,10 +706,10 @@ ExplicitBitVect *wrapRDKFingerprintMol(
   std::vector<std::vector<std::uint32_t>> *lAtomBits = nullptr;
   std::map<std::uint32_t, std::vector<std::vector<int>>> *lBitInfo = nullptr;
   // if(!(atomBits.is_none())){
-  if (atomBits != python::object()) {
+  if (!atomBits.is_none()) {
     lAtomBits = new std::vector<std::vector<std::uint32_t>>(mol.getNumAtoms());
   }
-  if (bitInfo != python::object()) {
+  if (!bitInfo.is_none()) {
     lBitInfo = new std::map<std::uint32_t, std::vector<std::vector<int>>>;
   }
   ExplicitBitVect *res;
@@ -773,11 +763,11 @@ SparseIntVect<boost::uint64_t> *wrapUnfoldedRDKFingerprintMol(
   std::map<boost::uint64_t, std::vector<std::vector<int>>> *lBitInfo = nullptr;
 
   // if(!(atomBits.is_none())){
-  if (atomBits != python::object()) {
+  if (!atomBits.is_none()) {
     lAtomBits =
         new std::vector<std::vector<boost::uint64_t>>(mol.getNumAtoms());
   }
-  if (bitInfo != python::object()) {
+  if (!bitInfo.is_none()) {
     lBitInfo = new std::map<boost::uint64_t, std::vector<std::vector<int>>>;
   }
 
@@ -818,6 +808,24 @@ SparseIntVect<boost::uint64_t> *wrapUnfoldedRDKFingerprintMol(
 
   return res;
 }
+PATH_LIST findUniqueSubgraphsOfLengthNHelper(const ROMol &mol,
+                                             unsigned int length, bool useHs,
+                                             bool useBO, int rootedAtAtom) {
+  return findUniqueSubgraphsOfLengthN(mol, length, useHs, useBO, rootedAtAtom);
+}
+
+PATH_LIST findAllSubgraphsOfLengthNHelper(const ROMol &mol, unsigned int length,
+                                          bool useHs, int rootedAtAtom) {
+  return findAllSubgraphsOfLengthN(mol, length, useHs, rootedAtAtom);
+}
+
+PATH_LIST findAllPathsOfLengthNHelper(const ROMol &mol, unsigned int length,
+                                      bool useBonds, bool useHs,
+                                      int rootedAtAtom,
+                                      bool onlyShortestPaths) {
+  return findAllPathsOfLengthN(mol, length, useBonds, useHs, rootedAtAtom,
+                               onlyShortestPaths);
+}
 
 python::object findAllSubgraphsOfLengthsMtoNHelper(const ROMol &mol,
                                                    unsigned int lowerLen,
@@ -848,7 +856,7 @@ PATH_TYPE findAtomEnvironmentOfRadiusNHelper(const ROMol &mol,
                                              bool useHs, bool enforceSize,
                                              python::object atomMap) {
   PATH_TYPE path;
-  if (atomMap == python::object()) {
+  if (atomMap.is_none()) {
     path = findAtomEnvironmentOfRadiusN(mol, radius, rootedAtAtom, useHs,
                                         enforceSize);
   } else {
@@ -874,7 +882,7 @@ ROMol *pathToSubmolHelper(const ROMol &mol, python::object &path, bool useQuery,
   }
   std::map<int, int> mapping;
   result = Subgraphs::pathToSubmol(mol, pth, useQuery, mapping);
-  if (atomMap != python::object()) {
+  if (!atomMap.is_none()) {
     // make sure the optional argument actually was a dictionary
     python::dict typecheck = python::extract<python::dict>(atomMap);
     atomMap.attr("clear")();
@@ -888,7 +896,7 @@ ROMol *pathToSubmolHelper(const ROMol &mol, python::object &path, bool useQuery,
 
 ROMol *adjustQueryPropertiesHelper(const ROMol &mol, python::object pyparams) {
   MolOps::AdjustQueryParameters params;
-  if (pyparams != python::object()) {
+  if (!pyparams.is_none()) {
     params = python::extract<MolOps::AdjustQueryParameters>(pyparams);
   }
   return MolOps::adjustQueryProperties(mol, &params);
@@ -897,7 +905,7 @@ ROMol *adjustQueryPropertiesHelper(const ROMol &mol, python::object pyparams) {
 ROMol *adjustQueryPropertiesWithGenericGroupsHelper(const ROMol &mol,
                                                     python::object pyparams) {
   MolOps::AdjustQueryParameters params;
-  if (pyparams != python::object()) {
+  if (!pyparams.is_none()) {
     params = python::extract<MolOps::AdjustQueryParameters>(pyparams);
   }
   return GenericGroups::adjustQueryPropertiesWithGenericGroups(mol, &params);
@@ -1269,7 +1277,18 @@ struct molops_wrapper {
                  python::arg("includeHydrogenBonds") = false),
                 docString.c_str());
 
-    // ------------------------------------------------------------------------
+    python::enum_<MolOps::SymmetrizeSSSRAlgorithm>("SymmetrizeSSSRAlgorithm")
+        .value("DEFAULT", MolOps::SymmetrizeSSSRAlgorithm::DEFAULT)
+        .value("LEGACY", MolOps::SymmetrizeSSSRAlgorithm::LEGACY)
+        .value("RDL", MolOps::SymmetrizeSSSRAlgorithm::RDL);
+
+    python::def(
+        "SetUseLegacyRingFinding", MolOps::setUseLegacyRingFinding,
+        python::args("val"),
+        "sets usage of the legacy symmetric SSSR code during sanitization");
+    python::def("GetUseLegacyRingFinding", MolOps::getUseLegacyRingFinding,
+                "returns whether or not the legacy symmetric SSSR code is "
+                "being used during sanitization");
     docString =
         "Get a symmetrized SSSR for a molecule.\n\
 \n\
@@ -1282,13 +1301,18 @@ struct molops_wrapper {
     - mol: the molecule to use.\n\
     - includeDativeBonds: whether or not dative bonds should be included in the ring finding.\n\
     - includeHydrogenBonds: whether or not hydrogen bonds should be included in the ring finding.\n\
+    - algorithm: the algorithm to use for symmetrizing the SSSR.\n\
+    - recalcSSSR: whether or not to recalculate the SSSR before symmetrizing it.\n\
 \n\
   RETURNS: a sequence of sequences containing the rings found as atom ids\n\
 \n";
-    python::def("GetSymmSSSR", getSymmSSSR,
-                (python::arg("mol"), python::arg("includeDativeBonds") = false,
-                 python::arg("includeHydrogenBonds") = false),
-                docString.c_str());
+    python::def(
+        "GetSymmSSSR", getSymmSSSR,
+        (python::arg("mol"), python::arg("includeDativeBonds") = false,
+         python::arg("includeHydrogenBonds") = false,
+         python::arg("algorithm") = MolOps::SymmetrizeSSSRAlgorithm::DEFAULT,
+         python::arg("recalcSSSR") = true),
+        docString.c_str());
 
     // ------------------------------------------------------------------------
     docString =
@@ -1876,7 +1900,8 @@ to the terminal dummy atoms.\n\
     - The molecule is modified in place.\n\
     )DOC";
     python::def("KekulizeIfPossible", kekulizeMolIfPossible,
-                (python::arg("mol"), python::arg("clearAromaticFlags") = false, python::arg("canonical")=true),
+                (python::arg("mol"), python::arg("clearAromaticFlags") = false,
+                 python::arg("canonical") = true),
                 docString.c_str());
     // ------------------------------------------------------------------------
     docString =
@@ -2072,7 +2097,7 @@ RETURNS:
   but only 2 _paths_ of length 3: (0,1,3),(2,1,3)\n\
 \n";
     python::def(
-        "FindAllSubgraphsOfLengthN", &findAllSubgraphsOfLengthN,
+        "FindAllSubgraphsOfLengthN", &findAllSubgraphsOfLengthNHelper,
         (python::arg("mol"), python::arg("length"),
          python::arg("useHs") = false, python::arg("rootedAtAtom") = -1),
         docString.c_str());
@@ -2110,7 +2135,8 @@ RETURNS:
   RETURNS: a tuple of tuples with bond IDs\n\
 \n\
 \n";
-    python::def("FindUniqueSubgraphsOfLengthN", &findUniqueSubgraphsOfLengthN,
+    python::def("FindUniqueSubgraphsOfLengthN",
+                &findUniqueSubgraphsOfLengthNHelper,
                 (python::arg("mol"), python::arg("length"),
                  python::arg("useHs") = false, python::arg("useBO") = true,
                  python::arg("rootedAtAtom") = -1),
@@ -2155,7 +2181,7 @@ RETURNS:
        has 3 _subgraphs_ of length 3: (0,1,2),(0,1,3),(2,1,3)\n\
        but only 2 _paths_ of length 3: (0,1,3),(2,1,3)\n\
 \n";
-    python::def("FindAllPathsOfLengthN", &findAllPathsOfLengthN,
+    python::def("FindAllPathsOfLengthN", &findAllPathsOfLengthNHelper,
                 (python::arg("mol"), python::arg("length"),
                  python::arg("useBonds") = true, python::arg("useHs") = false,
                  python::arg("rootedAtAtom") = -1,
@@ -3377,13 +3403,42 @@ A note on the flags controlling which atoms/bonds are modified:
 
   Arguments:
    - mol: molecule to be modified
-   - markedOnly: if true, only dummy atoms with the _fromAttachPoint
-     property will be collapsed
+   - markedOnly: if true, only dummy atoms with the _fromAttachPoint property
+     or a valid _AP<n> atom label will be collapsed. The label suffix is not
+     interpreted as an MDL attachment-point position.
 
   In order for a dummy atom to be considered for collapsing it must have:
    - degree 1 with a single or unspecified bond
    - the bond to it can not be wedged
    - either no query or be an AtomNullQuery
+)DOC");
+    python::def(
+        "GetAttachmentPointLabelNumber", MolOps::getAttachmentPointLabelNumber,
+        python::arg("atom"),
+        R"DOC(returns the positive integer from a valid _AP<n> attachment-point label
+
+  The atom must be a degree-one dummy atom. Returns 0 if it does not have a
+  valid numbered attachment-point label. The returned number is a label
+  identifier, not an MDL ATTCHPT position.
+
+  Arguments:
+   - atom: the atom to inspect
+)DOC");
+    python::scope().attr("ATTACHMENT_POINT_LABEL_PREFIX") =
+        std::string(MolOps::attachmentPointLabelPrefix);
+    python::def(
+        "IsMarkedAttachmentPoint", MolOps::isMarkedAttachmentPoint,
+        python::arg("atom"),
+        R"DOC(returns whether an atom is a marked explicit attachment point
+
+  A marked attachment point is a degree-one dummy atom with the
+  _fromAttachPoint property or a valid _AP<n> atom label, where n is a
+  positive decimal integer. This checks attachment-point identity only, not
+  whether the atom can currently be collapsed. In particular, an attachment
+  point connected by a wedged bond is still considered marked.
+
+  Arguments:
+   - atom: the atom to inspect
 )DOC");
     python::def(
         "AddStereoAnnotations", Chirality::addStereoAnnotations,

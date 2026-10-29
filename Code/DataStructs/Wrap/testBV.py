@@ -1,10 +1,11 @@
 import pickle
 import random
+import sys
 import unittest
 
 import numpy
 
-from rdkit import DataStructs, RDConfig
+from rdkit import DataStructs
 
 
 def feq(a, b, tol=1e-4):
@@ -67,7 +68,7 @@ class TestCase(unittest.TestCase):
       x = random.randrange(0, nbits)
       bv1.SetBit(x)
 
-    pkl = pickle.dumps(bv1, 1)
+    pkl = pickle.dumps(bv1)
     bv2 = pickle.loads(pkl)
     for i in range(nbits):
       assert bv1[i] == bv2[i]
@@ -79,7 +80,7 @@ class TestCase(unittest.TestCase):
       x = random.randrange(0, nbits)
       bv1.SetBit(x)
 
-    pkl = pickle.dumps(bv1, 1)
+    pkl = pickle.dumps(bv1)
     bv2 = pickle.loads(pkl)
     for i in range(nbits):
       assert bv1[i] == bv2[i]
@@ -231,6 +232,23 @@ class TestCase(unittest.TestCase):
       for i in range(iv.GetLength()):
         self.assertEqual(iv[i], arr[i])
 
+  def test10ToNumpyResize(self):
+    import numpy
+    bv = DataStructs.ExplicitBitVect(4)
+    bv.SetBit(1)
+    for dtype in (numpy.int32, numpy.float64, object):
+      arr = numpy.zeros((0, ), dtype=dtype)
+      DataStructs.ConvertToNumpyArray(bv, arr)
+      numpy.testing.assert_array_equal(arr, [0, 1, 0, 0])
+      if dtype is object:
+        self.assertTrue(all(type(value) is int for value in arr))
+
+    for dtype in ('U5', 'S5'):
+      arr = numpy.zeros((0, ), dtype=dtype)
+      DataStructs.ConvertToNumpyArray(bv, arr)
+      expected = numpy.array(['0', '1', '0', '0'], dtype=dtype)
+      numpy.testing.assert_array_equal(arr, expected)
+
   def test11BulkNeighbors(self):
     nbits = 2048
     bvs = []
@@ -319,6 +337,19 @@ class TestCase(unittest.TestCase):
       self.assertTrue(ffp[1])
       self.assertTrue(ffp[2])
       self.assertFalse(ffp[3])
+
+  def test16ToText(self):
+    for cls in [DataStructs.ExplicitBitVect, DataStructs.SparseBitVect]:
+      bv1 = cls(64)
+      obits = range(0, 64, 3)
+
+      for bit in obits:
+        bv1.SetBit(bit)
+
+      text = DataStructs.BitVectToText(bv1)
+      self.assertEqual(text,
+                       '1001001001001001001001001001001001001001001001001001001001001001')
+      self.assertEqual(bv1.ToBitString(), text)
 
 
 if __name__ == '__main__':

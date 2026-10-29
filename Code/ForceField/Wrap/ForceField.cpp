@@ -1,4 +1,3 @@
-// $Id$
 //
 //  Copyright (C) 2004-2006 Rational Discovery LLC
 //
@@ -125,7 +124,7 @@ PyObject *ForceFieldGetExtraPointLoc(PyForceField *self, unsigned int idx) {
 
 double PyForceField::calcEnergyWithPos(const python::object &pos) {
   PRECONDITION(this->field, "no force field");
-  if (pos != python::object()) {
+  if (!pos.is_none()) {
     size_t s = this->field->dimension() * this->field->numPoints();
     unsigned int numElements = python::len(pos);
     if (s != numElements) {
@@ -164,7 +163,7 @@ PyObject *PyForceField::calcGradWithPos(const python::object &pos) {
   size_t s = this->field->dimension() * this->field->numPoints();
   std::vector<double> g(s, 0.0);
   PyObject *gradTuple = PyTuple_New(s);
-  if (pos != python::object()) {
+  if (!pos.is_none()) {
     unsigned int numElements = python::len(pos);
     if (s != numElements) {
       throw ValueErrorException(

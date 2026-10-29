@@ -1,6 +1,4 @@
-# $Id$
-#
-#  Copyright (C) 2006-2025 Greg Landrum and other RDKit contributors
+#  Copyright (C) 2006-2026 Greg Landrum and other RDKit contributors
 #
 #   @@ All Rights Reserved @@
 #  This file is part of the RDKit.
@@ -11,7 +9,6 @@
 
 import math
 
-from rdkit import rdBase
 from rdkit.DataStructs import cDataStructs
 from rdkit.DataStructs.cDataStructs import *
 
@@ -48,22 +45,20 @@ def FingerprintSimilarity(fp1, fp2, metric=TanimotoSimilarity):
 
 
 def FoldToTargetDensity(fp, density=0.3, minLength=64):
-  while fp.GetNumOnBits() / len(fp) > density and len(fp) // 2 > minLength:
+  while fp.GetNumOnBits() / len(fp) < density and len(fp) // 2 >= minLength:
     fp = FoldFingerprint(fp, 2)
   return fp
+
 
 def getNForFlatMatrix(matrix):
   """Get n for a strict upper- (or lower-) triangular matrix."""
   return (1 + math.isqrt(1 + 8 * len(matrix))) // 2
+
 
 def getElementFromFlatMatrix(matrix, i, j):
   """Return element (i,j); diagonal is 0; lower side mirrors upper."""
   if i == j:
     return 0.0
   if i > j:
-    i,j=j,i 
+    i, j = j, i
   return matrix[j * (j - 1) // 2 + i]
-
-
-ExplicitBitVect.ToBitString = BitVectToText
-SparseBitVect.ToBitString = BitVectToText

@@ -571,7 +571,7 @@ class RingBondCountVect {
   bool isRingFusionHonored() {
     for (const auto &ringBondCount : d_ringBondCountVect) {
       unsigned int ringIdx = &ringBondCount - &d_ringBondCountVect.front();
-      const auto &bondRings = d_ringInfo->bondRings().at(ringIdx);
+      const auto bondRings = d_ringInfo->bondRings().at(ringIdx);
       // if all or no bonds of this ring are part of MCS, no need to do further
       // checks
       const auto numRingBondsInMCS = ringBondCount.isMCSRingBond.count();
@@ -617,12 +617,16 @@ class RingBondCountVect {
   std::vector<BondCount> d_ringBondCountVect;
   boost::dynamic_bitset<> d_isMCSBond;
 };
-}  // end of anonymous namespace
 
-inline bool ringFusionCheck(const std::uint32_t c1[], const std::uint32_t c2[],
-                            const ROMol &mol1, const FMCS::Graph &query,
-                            const ROMol &mol2, const FMCS::Graph &target,
-                            const MCSParameters &p) {
+// Kept in the anonymous namespace (internal linkage) because it captures
+// RingBondCountVect, which lives here too. Marking it inline (external linkage)
+// would give its lambda an external-linkage closure type with an
+// internal-linkage member, an ODR hazard that -Werror=subobject-linkage rejects
+// under unity builds.
+bool ringFusionCheck(const std::uint32_t c1[], const std::uint32_t c2[],
+                     const ROMol &mol1, const FMCS::Graph &query,
+                     const ROMol &mol2, const FMCS::Graph &target,
+                     const MCSParameters &p) {
   /*
   Consider this case: MCS between
   2-methylbicyclo[4.3.0]nonane and 1-methylbicyclo[3.1.0]hexane
@@ -676,6 +680,7 @@ inline bool ringFusionCheck(const std::uint32_t c1[], const std::uint32_t c2[],
   }
   return res;
 }
+}  // end of anonymous namespace
 
 bool FinalMatchCheckFunction(const std::uint32_t c1[], const std::uint32_t c2[],
                              const ROMol &mol1, const FMCS::Graph &query,

@@ -73,7 +73,7 @@ bool Seed::canAddAllNonFusedRingBondsConnectedToBond(
   const auto &mol = bond.getOwningMol();
   const auto ri = mol.getRingInfo();
   int bondIdx = bond.getIdx();
-  const auto &bondRings = ri->bondRings().at(ri->bondMembers(bondIdx).front());
+  const auto bondRings = ri->bondRings().at(ri->bondMembers(bondIdx).front());
   std::set<unsigned int> nonFusedRingBondIndices;
   boost::dynamic_bitset<> connectedAtomIndices(mol.getNumAtoms());
   Seed seed;
@@ -272,9 +272,9 @@ void Seed::grow(MaximumCommonSubgraph &mcs) const {
   // add all other from 2^k-1 possible seeds, where k=newBonds.size()
   // if just one new bond, then seed has already been created
   if (NewBonds.size() > 1) {
-    if (sizeof(unsigned long long) * 8 < NewBonds.size()) {
+    if (sizeof(BitSet) * 8 <= NewBonds.size()) {
       throw std::runtime_error(
-          "Max number of new external bonds of a seed >64");
+          "Number of new external bonds of a seed must be below 64");
     }
     BitSet maxCompositionValue;
     Composition2N::compute2N(NewBonds.size(), maxCompositionValue);

@@ -1,12 +1,17 @@
 #
-#  Copyright (C) 2001  greg Landrum
+#  Copyright (C) 2001-2026  greg Landrum and other RDKit contributors
 #
 """ unit testing code for variable quantization
 
 """
 import unittest
-
+from rdkit import rdBase
 from rdkit.ML.Data import Quantize
+
+# Make sure that cQuantize is available. We can use the Quantize module without
+# it, but let's assume that whoever is running the unit tests has installed the 
+# python wrappers
+from rdkit.ML.Data import cQuantize
 
 
 class TestCase(unittest.TestCase):
@@ -286,8 +291,12 @@ class TestCase(unittest.TestCase):
     _ = Quantize.FindVarMultQuantBounds(d, 1, a, 2)
 
     d2 = [(x, ) for x in d]
-    self.assertRaises(ValueError, lambda: Quantize.FindVarMultQuantBounds(d2, 1, a, 2))
-    self.assertRaises(ValueError, lambda: Quantize._FindStartPoints(d2, a, len(d2)))
+    if hasattr(rdBase, '_wrapperType') and rdBase._wrapperType == 'nanobind':
+      self.assertRaises(TypeError, lambda: Quantize.FindVarMultQuantBounds(d2, 1, a, 2))
+      self.assertRaises(TypeError, lambda: Quantize._FindStartPoints(d2, a, len(d2)))
+    else:
+      self.assertRaises(ValueError, lambda: Quantize.FindVarMultQuantBounds(d2, 1, a, 2))
+      self.assertRaises(ValueError, lambda: Quantize._FindStartPoints(d2, a, len(d2)))
 
 
 if __name__ == '__main__':  # pragma: nocover

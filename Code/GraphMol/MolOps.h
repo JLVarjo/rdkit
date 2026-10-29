@@ -1,5 +1,5 @@
 //
-//  Copyright (C) 2001-2024 Greg Landrum and other RDKit contributors
+//  Copyright (C) 2001-2026 Greg Landrum and other RDKit contributors
 //
 //   @@ All Rights Reserved @@
 //  This file is part of the RDKit.
@@ -13,7 +13,8 @@
 
 #include <vector>
 #include <map>
-#include <list>
+#include <memory>
+#include <string_view>
 #include <RDGeneral/BoostStartInclude.h>
 #include <boost/smart_ptr.hpp>
 #include <boost/dynamic_bitset.hpp>
@@ -30,9 +31,9 @@ class RWMol;
 class Atom;
 class Bond;
 class Conformer;
-typedef std::vector<double> INVAR_VECT;
-typedef INVAR_VECT::iterator INVAR_VECT_I;
-typedef INVAR_VECT::const_iterator INVAR_VECT_CI;
+using INVAR_VECT = std::vector<double>;
+using INVAR_VECT_I = INVAR_VECT::iterator;
+using INVAR_VECT_CI = INVAR_VECT::const_iterator;
 
 //! \brief Groups a variety of molecular query and transformation operations.
 namespace MolOps {
@@ -203,6 +204,27 @@ struct RDKIT_GRAPHMOL_EXPORT AddHsParameters {
 RDKIT_GRAPHMOL_EXPORT void addHs(RWMol &mol, const AddHsParameters &params,
                                  const UINT_VECT *onlyOnAtoms = nullptr);
 
+//! adds Hs to a molecule as explicit Atoms
+/*!
+    \param mol          the molecule to add Hs to
+    \param params       parameters controlling which Hs are added.
+    \param onlyOnAtoms   (optional) if provided, this should be a vector of
+                IDs of the atoms that will be considered for H addition.
+
+    <b>Notes:</b>
+       - it makes no sense to use the \c addCoords option if the molecule's
+   heavy atoms don't already have coordinates.
+       - the caller is responsible for <tt>delete</tt>ing the pointer this
+   returns.
+ */
+inline RDKIT_GRAPHMOL_EXPORT ROMol *addHs(
+    const ROMol &mol, const AddHsParameters &params,
+    const UINT_VECT *onlyOnAtoms = nullptr) {
+  std::unique_ptr<RWMol> res{new RWMol(mol)};
+  addHs(*res, params, onlyOnAtoms);
+  return static_cast<ROMol *>(res.release());
+}
+
 //! returns a copy of a molecule with hydrogens added in as explicit Atoms
 /*!
     \param mol          the molecule to add Hs to
@@ -289,10 +311,9 @@ RDKIT_GRAPHMOL_EXPORT void setTerminalAtomCoords(ROMol &mol, unsigned int idx,
    returns.
 */
 [[deprecated(
-    "Please use the version with RemoveHsParameters")]] RDKIT_GRAPHMOL_EXPORT
-    ROMol *
-    removeHs(const ROMol &mol, bool implicitOnly,
-             bool updateExplicitCount = false, bool sanitize = true);
+    "Please use the version with RemoveHsParameters")]] RDKIT_GRAPHMOL_EXPORT ROMol *
+removeHs(const ROMol &mol, bool implicitOnly, bool updateExplicitCount = false,
+         bool sanitize = true);
 //! \overload
 /// modifies the molecule in place
 [[deprecated(
@@ -395,7 +416,7 @@ RDKIT_GRAPHMOL_EXPORT void mergeQueryHs(RWMol &mol,
 */
 RDKIT_GRAPHMOL_EXPORT std::pair<bool, bool> hasQueryHs(const ROMol &mol);
 
-typedef enum {
+enum AdjustQueryWhichFlags {
   ADJUST_IGNORENONE = 0x0,
   ADJUST_IGNORECHAINS = 0x1,
   ADJUST_IGNORERINGS = 0x4,
@@ -403,7 +424,7 @@ typedef enum {
   ADJUST_IGNORENONDUMMIES = 0x8,
   ADJUST_IGNOREMAPPED = 0x10,
   ADJUST_IGNOREALL = 0xFFFFFFF
-} AdjustQueryWhichFlags;
+};
 
 //! Parameters controlling the behavior of MolOps::adjustQueryProperties
 /*!
@@ -541,8 +562,8 @@ BETTER_ENUM(SanitizeFlags, unsigned int,
    This functions calls the following in sequence
      -# MolOps::cleanUp()
      -# mol.updatePropertyCache()
-     -# MolOps::symmetrizeSSSR()
      -# MolOps::Kekulize()
+     -# MolOps::symmetrizeSSSR()
      -# MolOps::assignRadicals()
      -# MolOps::setAromaticity()
      -# MolOps::setConjugation()
@@ -613,14 +634,14 @@ does not consider the outer envelope of fused rings)
 - \c AROMATICIT_MMFF94 the aromaticity model used by the MMFF94 force field
 - \c AROMATICITY_CUSTOM uses a caller-provided function
 */
-typedef enum {
+enum AromaticityModel {
   AROMATICITY_DEFAULT = 0x0,  ///< future proofing
   AROMATICITY_RDKIT = 0x1,
   AROMATICITY_SIMPLE = 0x2,
   AROMATICITY_MDL = 0x4,
   AROMATICITY_MMFF94 = 0x8,
   AROMATICITY_CUSTOM = 0xFFFFFFF  ///< use a function
-} AromaticityModel;
+};
 
 //! sets the aromaticity model for a molecule to MMFF94
 RDKIT_GRAPHMOL_EXPORT void setMMFFAromaticity(RWMol &mol);
@@ -807,6 +828,16 @@ RDKIT_GRAPHMOL_EXPORT void setHybridization(ROMol &mol);
 //! \name Ring finding and SSSR
 //! @{
 
+constexpr auto useLegacyRingFindingEnvVar = "RDK_USE_LEGACY_RING_FINDING";
+constexpr bool useLegacyRingFindingDefaultVal =
+    false;  //!< whether or not the legacy symmetric SSSR code is used during
+            //!< sanitization
+//! \brief sets whether or not the legacy symmetric SSSR code is used
+RDKIT_GRAPHMOL_EXPORT extern void setUseLegacyRingFinding(bool val);
+//! \brief returns whether or not the legacy symmetric SSSR code is used during
+//! sanitization
+RDKIT_GRAPHMOL_EXPORT extern bool getUseLegacyRingFinding();
+
 //! finds a molecule's Smallest Set of Smallest Rings
 /*!
   Currently this implements a modified form of Figueras algorithm
@@ -877,6 +908,12 @@ RDKIT_GRAPHMOL_EXPORT void findRingFamilies(const ROMol &mol,
                                             bool includeDativeBonds = false,
                                             bool includeHydrogenBonds = false);
 
+enum class SymmetrizeSSSRAlgorithm {
+  DEFAULT,
+  LEGACY,
+  RDL
+};
+
 //! symmetrize the molecule's Smallest Set of Smallest Rings
 /*!
    SSSR rings obtained from "findSSSR" can be non-unique in some case.
@@ -894,6 +931,10 @@ RDKIT_GRAPHMOL_EXPORT void findRingFamilies(const ROMol &mol,
   \param res used to return the vector of rings. Each entry is a vector with
       atom indices.  This information is also stored in the molecule's
       RingInfo structure, so this argument is optional (see overload)
+  \param algorithm - determines which algorithm is used to find the rings and
+      do the symmetrization
+  \param recalcSSSR - if set, the SSSR set will be recalculated, otherwise if
+      there is an existing SSSR set, it will be used
   \param includeDativeBonds - determines whether or not dative bonds are used
   in the ring finding.
   \param includeHydrogenBonds - determines whether or not hydrogen bonds are
@@ -905,14 +946,38 @@ RDKIT_GRAPHMOL_EXPORT void findRingFamilies(const ROMol &mol,
    - if no SSSR rings are found on the molecule - MolOps::findSSSR() is called
   first
 */
-RDKIT_GRAPHMOL_EXPORT int symmetrizeSSSR(ROMol &mol,
-                                         std::vector<std::vector<int>> &res,
-                                         bool includeDativeBonds = false,
-                                         bool includeHydrogenBonds = false);
+RDKIT_GRAPHMOL_EXPORT int symmetrizeSSSR(
+    ROMol &mol, std::vector<std::vector<int>> &res,
+    SymmetrizeSSSRAlgorithm algorithm = SymmetrizeSSSRAlgorithm::DEFAULT,
+    bool recalcSSSR = true, bool includeDativeBonds = false,
+    bool includeHydrogenBonds = false);
 //! \overload
-RDKIT_GRAPHMOL_EXPORT int symmetrizeSSSR(ROMol &mol,
-                                         bool includeDativeBonds = false,
-                                         bool includeHydrogenBonds = false);
+inline int symmetrizeSSSR(
+    ROMol &mol,
+    SymmetrizeSSSRAlgorithm algorithm = SymmetrizeSSSRAlgorithm::DEFAULT,
+    bool recalcSSSR = true, bool includeDativeBonds = false,
+    bool includeHydrogenBonds = false) {
+  std::vector<std::vector<int>> res;
+  return symmetrizeSSSR(mol, res, algorithm, recalcSSSR, includeDativeBonds,
+                        includeHydrogenBonds);
+}
+
+//! \overload
+inline int symmetrizeSSSR(ROMol &mol, std::vector<std::vector<int>> &res,
+                          bool includeDativeBonds,
+                          bool includeHydrogenBonds = false) {
+  bool recalcSSSR = true;
+  return symmetrizeSSSR(mol, res, SymmetrizeSSSRAlgorithm::DEFAULT, recalcSSSR,
+                        includeDativeBonds, includeHydrogenBonds);
+}
+//! \overload
+inline int symmetrizeSSSR(ROMol &mol, bool includeDativeBonds,
+                          bool includeHydrogenBonds = false) {
+  std::vector<std::vector<int>> res;
+  bool recalcSSSR = true;
+  return symmetrizeSSSR(mol, res, SymmetrizeSSSRAlgorithm::DEFAULT, recalcSSSR,
+                        includeDativeBonds, includeHydrogenBonds);
+}
 
 //! @}
 
@@ -1342,7 +1407,8 @@ RDKIT_GRAPHMOL_EXPORT void expandAttachmentPoints(RWMol &mol,
  *
  * @param mol the molecule of interest
  * @param markedOnly if true, only dummy atoms with the _fromAttachPoint
- *    property will be collapsed
+ *    property or a valid _AP<n> atom label will be collapsed. The numeric
+ *    suffix of an atom label is an identifier, not an MDL ATTCHPT position.
  *
  * In order for a dummy atom to be considered for collapsing it must have:
  * - degree 1 with a single or unspecified bond
@@ -1352,6 +1418,34 @@ RDKIT_GRAPHMOL_EXPORT void expandAttachmentPoints(RWMol &mol,
  */
 RDKIT_GRAPHMOL_EXPORT void collapseAttachmentPoints(RWMol &mol,
                                                     bool markedOnly = true);
+
+//! prefix used for numbered explicit attachment-point atom labels
+inline constexpr std::string_view attachmentPointLabelPrefix = "_AP";
+
+//! returns the positive integer from a valid _AP<n> attachment-point label
+/*!
+ * The atom must be a degree-one dummy atom whose atomLabel consists of
+ * attachmentPointLabelPrefix followed by a positive decimal integer. Returns
+ * 0 if the atom does not have a valid numbered attachment-point label.
+ *
+ * This number is a label identifier, not an MDL ATTCHPT position.
+ *
+ * @param atom the atom to inspect
+ */
+RDKIT_GRAPHMOL_EXPORT unsigned int getAttachmentPointLabelNumber(
+    const Atom *atom);
+
+//! returns whether an atom is a marked explicit attachment point
+/*!
+ * A marked explicit attachment point is a degree-one dummy atom with the
+ * _fromAttachPoint property or a valid _AP<n> atom label, where n is a
+ * positive decimal integer. This checks attachment-point identity only; it
+ * does not check whether the atom can currently be collapsed. In particular,
+ * an attachment point connected by a wedged bond is still considered marked.
+ *
+ * @param atom the atom to inspect
+ */
+RDKIT_GRAPHMOL_EXPORT bool isMarkedAttachmentPoint(const Atom *atom);
 
 namespace details {
 //! attachment points encoded as attachPt properties are added to the graph as
@@ -1372,12 +1466,11 @@ RDKIT_GRAPHMOL_EXPORT unsigned int addExplicitAttachmentPoint(
     RWMol &mol, unsigned int atomIdx, unsigned int val, bool addAsQuery = true,
     bool addCoords = true);
 
-//! returns whether or not an atom is an attachment point
+//! returns whether an atom is eligible to be collapsed as an attachment point
 /*!
  *
- * @param mol the molecule of interest
- * @param markedOnly if true, only dummy atoms with the _fromAttachPoint
- *    property will be collapsed
+ * @param atom the atom to inspect
+ * @param markedOnly if true, only marked attachment points will be collapsed
  *
  * In order for a dummy atom to be considered for collapsing it must have:
  * - degree 1 with a single or unspecified bond

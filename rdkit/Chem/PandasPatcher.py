@@ -88,12 +88,14 @@ except ImportError:
   log.warning("Failed to import pandas")
   raise
 
-try:
-  if tuple(map(int, (pd.__version__.split(".")))) < (2, 1, 0):
-    dataframe_applymap = pd.DataFrame.applymap
-  else:
-    dataframe_applymap = pd.DataFrame.map
-except:
+# pandas 2.1.0 renamed DataFrame.applymap to DataFrame.map. Look it up by name;
+# pd.__version__ is not always parseable as ints (e.g. "2.1.0rc0").
+dataframe_applymap = None
+for map_func_name in ("map", "applymap"):
+  dataframe_applymap = getattr(pd.DataFrame, map_func_name, None)
+  if dataframe_applymap is not None:
+    break
+if dataframe_applymap is None:
   log.warning("Failed to find a suitable map function for data frames")
 
 orig_to_html = getattr(to_html_class, "to_html")
@@ -213,7 +215,13 @@ def patched_get_formatter(self, i, *args, **kwargs):
     n_trunc_cols = len(self.columns) - max_cols
     if n_trunc_cols > 0:
       i += n_trunc_cols
-  return orig_get_formatter(self, i, *args, **kwargs)
+  try:
+    res = orig_get_formatter(self, i, *args, **kwargs)
+  except IndexError:
+    # this started happening with Pandas 3.1 because of this PR:
+    #   https://github.com/pandas-dev/pandas/pull/65288
+    res = orig_get_formatter(self, i - n_trunc_cols, *args, **kwargs)
+  return res
 
 
 def patched_write_cell(self, s, *args, **kwargs):

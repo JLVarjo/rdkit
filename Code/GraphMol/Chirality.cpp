@@ -43,18 +43,6 @@ bool shouldDetectDoubleBondStereo(const Bond *bond) {
               Chirality::minRingSizeForDoubleBondStereo);
 }
 
-bool getValFromEnvironment(const char *var, bool defVal) {
-  auto evar = std::getenv(var);
-  if (evar != nullptr) {
-    if (!strcmp(evar, "0")) {
-      return false;
-    } else {
-      return true;
-    }
-  }
-  return defVal;
-}
-
 bool is_regular_h(const Atom &atom) {
   return atom.getAtomicNum() == 1 && atom.getIsotope() == 0;
 }
@@ -845,12 +833,6 @@ std::optional<Atom::ChiralType> atomChiralTypeFromBondDirPseudo3D(
   return res;
 }
 
-#ifdef _WIN32
-int setenv(const char *name, const char *value, int) {
-  return _putenv_s(name, value);
-}
-#endif
-
 void setAllowNontetrahedralChirality(bool val) {
   if (val) {
     setenv(nonTetrahedralStereoEnvVar, "1", 1);
@@ -1612,8 +1594,8 @@ void findChiralAtomSpecialCases(ROMol &mol,
             ringAtomEntry < 0 ? -ringAtomEntry - 1 : ringAtomEntry - 1;
         same[ringAtomIdx] = ringAtomEntry;
       }
-      for (INT_VECT_CI rae = ringStereoAtoms.begin();
-           rae != ringStereoAtoms.end(); ++rae) {
+      for (auto rae = ringStereoAtoms.begin(); rae != ringStereoAtoms.end();
+           ++rae) {
         int ringAtomEntry = *rae;
         int ringAtomIdx =
             ringAtomEntry < 0 ? -ringAtomEntry - 1 : ringAtomEntry - 1;
@@ -2181,7 +2163,7 @@ INT_VECT findStereoAtoms(const Bond *bond) {
 }
 void cleanupStereoGroups(ROMol &mol) {
   std::vector<StereoGroup> newsgs;
-  for (auto sg : mol.getStereoGroups()) {
+  for (const auto &sg : mol.getStereoGroups()) {
     std::vector<Atom *> okatoms;
     std::vector<Bond *> okbonds;
     bool keep = true;
@@ -2257,6 +2239,37 @@ std::ostream &operator<<(std::ostream &oss, const StereoSpecified &s) {
   }
   return oss;
 }
+
+namespace {
+//! detect atropisomers and discard the ones that cannot actually rotate
+/*!
+  We run after sanitization, so MolOps::cleanupAtropisomers() has already had
+  its turn and won't get another one. Redo the ring check it does here so
+  that bonds in small rings don't end up tagged as atropisomers.
+*/
+void detectAtropisomersPostSanitization(ROMol &mol, bool cleanIt) {
+  const Conformer *conf =
+      mol.getNumConformers() ? &mol.getConformer() : nullptr;
+  Atropisomers::detectAtropisomerChirality(mol, conf, cleanIt);
+  const auto ri = mol.getRingInfo();
+  if (!cleanIt || !ri->isSssrOrBetter()) {
+    return;
+  }
+  bool removedAny = false;
+  for (auto bond : mol.bonds()) {
+    if ((bond->getStereo() == Bond::BondStereo::STEREOATROPCW ||
+         bond->getStereo() == Bond::BondStereo::STEREOATROPCCW) &&
+        ri->numBondRings(bond->getIdx()) > 0 &&
+        ri->minBondRingSize(bond->getIdx()) < minRingSizeForDoubleBondStereo ) {
+      bond->setStereo(Bond::BondStereo::STEREONONE);
+      removedAny = true;
+    }
+  }
+  if (removedAny) {
+    Atropisomers::cleanupAtropisomerStereoGroups(mol);
+  }
+}
+}  // namespace
 
 /*
     We're going to do this iteratively:
@@ -2427,6 +2440,9 @@ void legacyStereoPerception(ROMol &mol, bool cleanIt,
         }
       }
     }
+  }
+  detectAtropisomersPostSanitization(mol, cleanIt);
+  if (cleanIt) {
     bool foundAtropisomer = false;
     for (auto bond : mol.bonds()) {
       // wedged bonds to atoms that have no stereochem
@@ -2597,6 +2613,7 @@ void stereoPerception(ROMol &mol, bool cleanIt,
   }
   // populate double bond stereo info:
   updateDoubleBondStereo(mol, sinfo, cleanIt);
+  detectAtropisomersPostSanitization(mol, cleanIt);
   if (cleanIt) {
     Atropisomers::cleanupAtropisomerStereoGroups(mol);
     Chirality::cleanupStereoGroups(mol);
@@ -3496,6 +3513,7 @@ void assignChiralTypesFrom3D(ROMol &mol, int confId, bool replaceExistingTags) {
       atom->setProp<int>(common_properties::_NonExplicit3DChirality, 1);
     }
   }
+  Atropisomers::detectAtropisomerChirality(mol, &conf, replaceExistingTags);
 }
 
 void assignChiralTypesFromMolParity(ROMol &mol, bool replaceExistingTags) {
@@ -3767,6 +3785,7 @@ void assignStereochemistryFrom3D(ROMol &mol, int confId,
 void assignChiralTypesFromBondDirs(ROMol &mol, const int confId,
                                    const bool replaceExistingTags) {
   if (!mol.getNumConformers()) {
+    Atropisomers::detectAtropisomerChirality(mol, nullptr, replaceExistingTags);
     return;
   }
   auto conf = mol.getConformer(confId);
@@ -3811,6 +3830,8 @@ void assignChiralTypesFromBondDirs(ROMol &mol, const int confId,
       }
     }
   }
+  Atropisomers::detectAtropisomerChirality(mol, &mol.getConformer(confId),
+                                           replaceExistingTags);
 }
 
 void removeStereochemistry(ROMol &mol) {

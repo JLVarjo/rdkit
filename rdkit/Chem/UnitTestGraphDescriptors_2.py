@@ -1,6 +1,4 @@
-# $Id$
-#
-#  Copyright (C) 2003-2006  Rational Discovery LLC
+#  Copyright (C) 2003-2026  Greg Landrum and other RDKit contributors
 #
 #   @@ All Rights Reserved @@
 #  This file is part of the RDKit.
@@ -12,11 +10,14 @@
 
 """
 
+import math
 import os.path
 import unittest
 
+import numpy
+
 from rdkit import Chem, RDConfig
-from rdkit.Chem import GraphDescriptors
+from rdkit.Chem import Graphs, GraphDescriptors
 
 doLong = False
 _THREE_RING = Chem.MolFromSmarts('*1~*~*~1')
@@ -94,6 +95,13 @@ class TestCase(unittest.TestCase):
       # treatment of aromatic atoms. (Tests pass actually even without the filter!)
       self.__testDesc('PP_descrs_regress.2.csv', 1, GraphDescriptors.BertzCT,
                       molFilter=_hasAromaticAtoms)
+
+  def testGithub8421(self):
+    # BertzCT was platform dependent: the InfoEntropy wrapper silently returned
+    # 0.0 for numpy's default integer dtype on Windows, which dropped the atom
+    # type term of the sum
+    m = Chem.MolFromSmiles('Fc1cccc(C2(c3nnc(Cc4cccc5ccccc45)o3)CCOCC2)c1')
+    self.assertAlmostEqual(GraphDescriptors.BertzCT(m), 1143.0567597744753, delta=1e-4)
 
   def testHallKierAlpha(self):
     self.__testDesc('PP_descrs_regress.csv', 3, GraphDescriptors.HallKierAlpha)
@@ -469,11 +477,11 @@ class TestCase(unittest.TestCase):
     for smi, res in data:
       m = Chem.MolFromSmiles(smi)
       for i in range(1, 6):
-        cnt = len(Chem.FindAllPathsOfLengthN(m, i, useBonds=1))
-        assert cnt == res[i], (smi, i, cnt, res[i], Chem.FindAllPathsOfLengthN(m, i, useBonds=1))
-        cnt = len(Chem.FindAllPathsOfLengthN(m, i + 1, useBonds=0))
+        cnt = len(Chem.FindAllPathsOfLengthN(m, i, useBonds=True))
+        assert cnt == res[i], (smi, i, cnt, res[i], Chem.FindAllPathsOfLengthN(m, i, useBonds=True))
+        cnt = len(Chem.FindAllPathsOfLengthN(m, i + 1, useBonds=False))
         assert cnt == res[i], (smi, i, cnt, res[i],
-                               Chem.FindAllPathsOfLengthN(m, i + 1, useBonds=1))
+                               Chem.FindAllPathsOfLengthN(m, i + 1, useBonds=False))
 
 
 class TestCase_python(unittest.TestCase):
@@ -523,6 +531,57 @@ class TestCase_python(unittest.TestCase):
       pyVal = pyFunc(mol)
       assert feq(cVal, pyVal,
                  1e-4), 'line %d, mol %s (c = %f, py = %f)' % (lineNum, smi, cVal, pyVal)
+
+
+  def testCharacteristicPolynomialLargeGraphs(self):
+    # The characteristic polynomial of a path graph has |constant term| = |det(A)| = 1.
+    # The Le Verrier-Faddeev-Frame recursion previously used here lost every significant
+    # digit above roughly 80 atoms and returned -1.97e26 here at n=120.
+    for n in (20, 60, 120, 200):
+      m = Chem.MolFromSmiles('C' * n)
+      cp = Graphs.CharacteristicPolynomial(m, Chem.GetAdjacencyMatrix(m))
+      self.assertAlmostEqual(
+        abs(cp[-1]), 1.0, delta=1e-6,
+        msg='n=%d: |constant term| should be 1, got %g' % (n, cp[-1]))
+
+  def testCharacteristicPolynomialCoefficients(self):
+    # For a path graph the whole coefficient vector is known in closed form:
+    #   det(xI - A) = sum_k (-1)**k * binom(n-k, k) * x**(n-2k)
+    # so every coefficient is checked, not only the constant term.
+    for n in (8, 20, 60):
+      m = Chem.MolFromSmiles('C' * n)
+      got = Graphs.CharacteristicPolynomial(m, Chem.GetAdjacencyMatrix(m))
+      want = numpy.zeros(n + 1)
+      for k in range(n // 2 + 1):
+        want[2 * k] = (-1)**k * math.comb(n - k, k)
+      scale = max(abs(want).max(), 1.0)
+      self.assertTrue(
+        numpy.allclose(got, want, rtol=0, atol=1e-9 * scale),
+        msg='n=%d: worst coefficient error %g (scale %g)' % (
+          n, abs(numpy.asarray(got) - want).max(), scale))
+
+  def testCharacteristicPolynomialAsymmetricMatrix(self):
+    # eigvalsh reads one triangle only, so a near-symmetric matrix must NOT take that path.
+    m = Chem.MolFromSmiles('CCC')
+    a = numpy.array(Chem.GetAdjacencyMatrix(m), dtype=float)
+    a[0, 1] += 1e-7
+    got = Graphs.CharacteristicPolynomial(m, a)
+    # compare against the polynomial of exactly this matrix, via its own eigenvalues
+    want = numpy.poly(numpy.linalg.eigvals(a)).real
+    self.assertTrue(numpy.allclose(got, want, atol=1e-10),
+                    msg='asymmetric input: got %s, expected %s' % (got, want))
+
+  def testAvgIpcIsMonotonicAndBounded(self):
+    # AvgIpc is a Shannon entropy over the n+1 coefficients, so it is bounded by log2(n+1)
+    # and cannot decrease as a chain is extended. It previously started decreasing near
+    # n=110, reaching 1.40 at n=120 where the true value is 3.76.
+    prev = 0.0
+    for n in range(20, 141, 20):
+      m = Chem.MolFromSmiles('C' * n)
+      v = GraphDescriptors.AvgIpc(m, forceDMat=1)
+      self.assertGreater(v, prev, 'AvgIpc decreased at n=%d (%g <= %g)' % (n, v, prev))
+      self.assertLess(v, math.log2(n + 1), 'AvgIpc exceeds its log2(n+1) bound at n=%d' % n)
+      prev = v
 
 
 if __name__ == '__main__':

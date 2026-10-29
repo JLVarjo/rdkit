@@ -28,6 +28,9 @@
 
 #ifndef EEMRDKIT_H_SEPT2017
 #define EEMRDKIT_H_SEPT2017
+#include <RDGeneral/export.h>
+#include <vector>
+#include <string>
 
 #ifdef RDK_BUILD_DESCRIPTORS3D
 namespace RDKit {
@@ -50,7 +53,7 @@ class EEM_arrays {
 };
 }  // namespace
 
-const std::string EEMVersion = "1.0.0";
+const std::string EEMVersion = "1.0.1";
 void RDKIT_DESCRIPTORS_EXPORT EEM(ROMol &mol, std::vector<double> &res,
                                   int confId);
 }  // namespace Descriptors

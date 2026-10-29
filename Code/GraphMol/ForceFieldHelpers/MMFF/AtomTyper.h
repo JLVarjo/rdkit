@@ -12,10 +12,14 @@
 #include <RDGeneral/export.h>
 #ifndef _RD_MMFFATOMTYPER_H__
 #define _RD_MMFFATOMTYPER_H__
+#include <boost/shared_ptr.hpp>
+#include <iostream>
 
 #include <vector>
 #include <string>
+#include <span>
 #include <ForceField/MMFF/Params.h>
+#include <RDGeneral/types.h>
 #include <cstdint>
 
 namespace RDKit {
@@ -63,12 +67,12 @@ class RDKIT_FORCEFIELDHELPERS_EXPORT MMFFAtomProperties {
   double mmffPartialCharge{0.0};
 };
 
-typedef boost::shared_ptr<MMFFAtomProperties> MMFFAtomPropertiesPtr;
+using MMFFAtomPropertiesPtr = boost::shared_ptr<MMFFAtomProperties>;
 enum {
   CONSTANT = 1,
   DISTANCE = 2
 };
-enum {
+enum MMFFVerbosity {
   MMFF_VERBOSITY_NONE = 0,
   MMFF_VERBOSITY_LOW = 1,
   MMFF_VERBOSITY_HIGH = 2
@@ -209,7 +213,7 @@ RDKIT_FORCEFIELDHELPERS_EXPORT unsigned int isTorsionInRingOfSize4or5(
     const ROMol &mol, const unsigned int idx1, const unsigned int idx2,
     const unsigned int idx3, const unsigned int idx4);
 RDKIT_FORCEFIELDHELPERS_EXPORT bool isRingAromatic(
-    const ROMol &mol, const INT_VECT &ringIndxVect);
+    const ROMol &mol, std::span<const int> ringIndices);
 RDKIT_FORCEFIELDHELPERS_EXPORT bool isAtomInAromaticRingOfSize(
     const Atom *atom, const unsigned int ringSize);
 RDKIT_FORCEFIELDHELPERS_EXPORT bool isAtomNOxide(const Atom *atom);

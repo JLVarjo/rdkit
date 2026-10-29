@@ -10,8 +10,8 @@ include(CMakePrintHelpers)
 # and will need to be fixed in the future
 if(RDK_BUILD_CHEMDRAW_SUPPORT)
   if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/chemdraw/chemdraw/CDXIO.h")
-    set(RELEASE_NO "1.0.12")
-    set(MD5 "8abbd599d798e980b63394a939a08b38")
+    set(RELEASE_NO "1.0.14")
+    set(MD5 "44be1a8e5bd41faaa238a6d584ca258b")
     downloadAndCheckMD5("https://codeload.github.com/Glysade/chemdraw/tar.gz/refs/tags/v${RELEASE_NO}"
       "${CMAKE_CURRENT_SOURCE_DIR}/chemdraw-v${RELEASE_NO}.tar.gz" ${MD5})
 
@@ -26,6 +26,10 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
   test_big_endian(WORDS_BIGENDIAN)
 
   include(CheckCXXCompilerFlag)
+  # ChemDraw, expatpp, RDChemDrawLib and RDChemDrawReactionLib all link
+  # EXPAT::EXPAT, so fail here with a clear message if expat is missing.
+  find_package(EXPAT REQUIRED)
+
 
   if (CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
      include(CheckCXXCompilerFlag)
@@ -49,8 +53,10 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
     add_definitions("-DPLATFORM_LITTLEENDIAN")
   endif(WORDS_BIGENDIAN)
 
-  # we don't want to install expat, this is statically linked in to the ChemDraw lib
-  # however, we don't want to install it so use the undocumented EXCLUDE_FROM_ALL
+  # expatpp (the C++ wrapper) is a static library linked into the ChemDraw libs;
+  # we don't want to install it so use the undocumented EXCLUDE_FROM_ALL.
+  # expat itself is not bundled: it is whatever EXPAT::EXPAT resolves to,
+  # typically the shared system libexpat, which is then a runtime dependency.
   add_subdirectory(chemdraw/expatpp EXCLUDE_FROM_ALL)
 
   include_directories(
@@ -61,7 +67,7 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
   file(GLOB CHEMDRAW_SOURCE "chemdraw/chemdraw/*.cpp")
   rdkit_library(ChemDraw ${CHEMDRAW_SOURCE} SHARED)
   target_compile_definitions(ChemDraw PRIVATE CHEMDRAW_BUILD)
-  target_link_libraries(ChemDraw PRIVATE expat)
+  target_link_libraries(ChemDraw PRIVATE expatpp EXPAT::EXPAT)
 
   # export all the symbols for ChemDraw on MSVC
   if((MSVC AND RDK_INSTALL_DLLS_MSVC) OR((NOT MSVC) AND WIN32))
@@ -122,7 +128,7 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
   endif()
 
   if(TARGET ChemDraw_static)
-    target_link_libraries(ChemDraw_static PUBLIC expat)
+    target_link_libraries(ChemDraw_static PUBLIC expatpp)
   endif()
 
   install(TARGETS ChemDraw DESTINATION ${RDKit_LibDir})
@@ -131,7 +137,7 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
   # so it needs to be installed so that it can be linked later on
   # when the libs are used.
   if(RDK_INSTALL_STATIC_LIBS OR NOT BUILD_SHARED_LIBS)
-    install(TARGETS expat EXPORT ${RDKit_EXPORTED_TARGETS} DESTINATION ${RDKit_LibDir} COMPONENT dev)
+    install(TARGETS expatpp EXPORT ${RDKit_EXPORTED_TARGETS} DESTINATION ${RDKit_LibDir} COMPONENT dev)
   endif()
 
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" )
@@ -161,6 +167,13 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
     SHARED LINK_LIBRARIES ChemDraw
     CIPLabeler ChemTransforms GraphMol RDGeneral Depictor SubstructMatch SmilesParse)
 
+  # expatpp is an external target without an _static variant. Link it directly
+  # so rdkit_library does not rewrite its name for static builds (including SWIG).
+  target_link_libraries(RDChemDrawLib PRIVATE expatpp)
+  if(TARGET RDChemDrawLib_static)
+    target_link_libraries(RDChemDrawLib_static PRIVATE expatpp)
+  endif()
+
   rdkit_library(RDChemDrawReactionLib
     chemdrawreaction.cpp
 
@@ -176,6 +189,9 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
     target_compile_definitions(RDChemDrawLib PRIVATE RDKIT_RDCHEMDRAWLIB_BUILD)
     target_compile_definitions(RDChemDrawReactionLib PRIVATE RDKIT_RDCHEMDRAWREACTIONLIB_BUILD)
   endif()
+
+  target_link_libraries(RDChemDrawLib PRIVATE EXPAT::EXPAT)
+  target_link_libraries(RDChemDrawReactionLib PRIVATE EXPAT::EXPAT)
 
   install(TARGETS RDChemDrawLib DESTINATION ${RDKit_LibDir})
   install(TARGETS RDChemDrawReactionLib DESTINATION ${RDKit_LibDir})
@@ -223,7 +239,11 @@ if(RDK_BUILD_CHEMDRAW_SUPPORT)
     endif(MSVC)
   endif(RDK_BUILD_CPP_TESTS)
 
-  if(RDK_BUILD_PYTHON_WRAPPERS)
+  if(RDK_BUILD_BOOST_PYTHON_WRAPPERS)
     add_subdirectory(Wrap)
-  endif(RDK_BUILD_PYTHON_WRAPPERS)
+  endif(RDK_BUILD_BOOST_PYTHON_WRAPPERS)
+
+  if(RDK_BUILD_NANOBIND_WRAPPERS)
+    add_subdirectory(nbWrap)
+  endif()
 endif(RDK_BUILD_CHEMDRAW_SUPPORT)

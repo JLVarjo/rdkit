@@ -82,7 +82,7 @@ void insertStereoGroups(RWMol &mol, const ROMol &other,
   mol.setStereoGroups(new_groups);
 }
 
-void insertSubstanceGroups(RWMol &mol, const RWMol &other,
+void insertSubstanceGroups(RWMol &mol, const ROMol &other,
                            unsigned int origNumAtoms,
                            unsigned int origNumBonds) {
   for (auto sgroup : getSubstanceGroups(other)) {
@@ -154,7 +154,7 @@ void RWMol::insertMol(const ROMol &other) {
         newAt->getPropIfPresent(common_properties::_ringStereoAtoms, nAtoms)) {
       for (auto &val : nAtoms) {
         if (val < 0) {
-          val = -1 * (-val + origNumAtoms);
+          val -= rdcast<int>(origNumAtoms);
         } else {
           val += origNumAtoms;
         }

@@ -24,6 +24,7 @@
 #include <vector>
 #include <algorithm>
 #include <fstream>
+#include <ranges>
 #include <sstream>
 #include <GraphMol/SmilesParse/SmilesParse.h>
 #include <RDGeneral/StreamOps.h>
@@ -388,7 +389,8 @@ ROMol *replaceCore(const ROMol &mol, const ROMol &coreQuery,
 namespace {
 const std::string replaceCoreDummyBond = "_replaceCoreDummyBond";
 
-int findNbrBond(RWMol &mol, Bond *bond, Atom *bondAtom, const INT_VECT &bring,
+int findNbrBond(RWMol &mol, Bond *bond, Atom *bondAtom,
+                std::span<const int> bring,
                 const boost::dynamic_bitset<> &removedAtoms) {
   int res = -1;
   for (const auto nbrBond : mol.atomBonds(bondAtom)) {
@@ -495,12 +497,16 @@ ROMol *replaceCore(const ROMol &mol, const ROMol &core,
             "atoms has degree > 1 ");
         auto coreNeighborIdx =
             core[*core.getAtomNeighbors(coreAtom).first]->getIdx();
-        auto molNeighborIdx =
-            std::find_if(matchV.cbegin(), matchV.cend(),
-                         [coreNeighborIdx](std::pair<int, int> p) {
-                           return p.first == static_cast<int>(coreNeighborIdx);
-                         })
-                ->second;
+        auto molNeighborMatch =
+            std::ranges::find_if(matchV, [coreNeighborIdx](auto p) {
+              return p.first == static_cast<int>(coreNeighborIdx);
+            });
+        if (molNeighborMatch == matchV.end()) {
+          throw ValueErrorException(
+              "Supplied MatchVect is missing the neighbor of a multiply "
+              "mapped core atom");
+        }
+        auto molNeighborIdx = molNeighborMatch->second;
         if (molNeighborIdx > -1) {
           auto connectingBond =
               mol.getBondBetweenAtoms(mappingInfo.molIndex, molNeighborIdx);
@@ -792,14 +798,14 @@ ROMol *MurckoDecompose(const ROMol &mol) {
       keepAtoms[i] = 1;
     }
   }
-  const VECT_INT_VECT &rings = ringInfo->atomRings();
+  const auto rings = ringInfo->atomRings();
   // std::cerr<<"  rings: "<<rings.size()<<std::endl;
   // now find the shortest paths between each ring system and mark the atoms
   // along each as being keepers:
-  for (auto ringsItI = rings.begin(); ringsItI != rings.end(); ++ringsItI) {
-    for (auto ringsItJ = ringsItI + 1; ringsItJ != rings.end(); ++ringsItJ) {
-      int atomI = (*ringsItI)[0];
-      int atomJ = (*ringsItJ)[0];
+  for (size_t ringIdxI = 0; ringIdxI < rings.size(); ++ringIdxI) {
+    for (size_t ringIdxJ = ringIdxI + 1; ringIdxJ < rings.size(); ++ringIdxJ) {
+      int atomI = rings[ringIdxI][0];
+      int atomJ = rings[ringIdxJ][0];
       // std::cerr<<atomI<<" -> "<<atomJ<<": ";
       while (atomI != atomJ) {
         keepAtoms[atomI] = 1;

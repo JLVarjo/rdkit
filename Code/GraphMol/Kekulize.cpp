@@ -28,13 +28,12 @@ void backTrack(RWMol &mol, INT_INT_DEQ_MAP &, int lastOpt, INT_VECT &done,
   // remove on done list that comes after the lastOpt including itself
 
   auto ei = std::find(done.begin(), done.end(), lastOpt);
-  INT_VECT tdone;
-  tdone.insert(tdone.end(), done.begin(), ei);
+  INT_VECT tdone(done.begin(), ei);
 
-  INT_VECT_CRI eri = std::find(done.rbegin(), done.rend(), lastOpt);
+  auto eri = std::find(done.rbegin(), done.rend(), lastOpt);
   ++eri;
   // and push them back onto the stack
-  for (INT_VECT_CRI ri = done.rbegin(); ri != eri; ++ri) {
+  for (auto ri = done.rbegin(); ri != eri; ++ri) {
     aqueue.push_front(*ri);
   }
 
@@ -457,30 +456,44 @@ bool kekulizeWorker(RWMol &mol, const INT_VECT &allAtms,
 class QuestionEnumerator {
  public:
   QuestionEnumerator(INT_VECT questions)
-      : d_questions(std::move(questions)), d_pos(1) {};
+      : d_questions(std::move(questions)), d_state(d_questions.size()) {
+    if (!d_state.empty()) {
+      // Start at one because the empty subset has already been attempted.
+      d_state.set(0);
+    }
+  }
   INT_VECT next() {
     INT_VECT res;
-    if (d_pos >= (0x1u << d_questions.size())) {
+    if (d_done) {
       return res;
     }
-    for (unsigned int i = 0; i < d_questions.size(); ++i) {
-      if (d_pos & (0x1u << i)) {
+    for (size_t i = 0; i < d_questions.size(); ++i) {
+      if (d_state.test(i)) {
         res.push_back(d_questions[i]);
       }
     }
-    ++d_pos;
+
+    size_t pos = 0;
+    while (pos < d_state.size() && d_state.test(pos)) {
+      d_state.reset(pos++);
+    }
+    if (pos == d_state.size()) {
+      d_done = true;
+    } else {
+      d_state.set(pos);
+    }
     return res;
-  };
+  }
 
  private:
   INT_VECT d_questions;
-  unsigned int d_pos;
+  boost::dynamic_bitset<> d_state;
+  bool d_done = false;
 };
 
 bool permuteDummiesAndKekulize(RWMol &mol, const INT_VECT &allAtms,
                                boost::dynamic_bitset<> dBndCands,
-                               INT_VECT &questions,
-                               const UINT_VECT &atomRanks,
+                               INT_VECT &questions, const UINT_VECT &atomRanks,
                                unsigned int maxBackTracks) {
   boost::dynamic_bitset<> atomsInPlay(mol.getNumAtoms());
   for (int allAtm : allAtms) {
@@ -509,9 +522,8 @@ bool permuteDummiesAndKekulize(RWMol &mol, const INT_VECT &allAtms,
       tCands[it] = 0;
     }
     // try kekulizing again:
-    kekulized =
-        kekulizeWorker(mol, allAtms, tCands, dBndAdds, done, atomRanks,
-                       maxBackTracks);
+    kekulized = kekulizeWorker(mol, allAtms, tCands, dBndAdds, done, atomRanks,
+                               maxBackTracks);
   }
   return kekulized;
 }
@@ -533,9 +545,8 @@ void kekulizeFused(RWMol &mol, const VECT_INT_VECT &arings,
   boost::dynamic_bitset<> dBndAdds(nbnds);
   markDbondCands(mol, allAtms, dBndCands, questions, done);
 
-  auto kekulized =
-      kekulizeWorker(mol, allAtms, dBndCands, dBndAdds, done, atomRanks,
-                     maxBackTracks);
+  auto kekulized = kekulizeWorker(mol, allAtms, dBndCands, dBndAdds, done,
+                                  atomRanks, maxBackTracks);
   if (!kekulized && questions.size()) {
     // we failed, but there are some dummy atoms we can try permuting.
     kekulized = permuteDummiesAndKekulize(mol, allAtms, dBndCands, questions,
@@ -649,14 +660,13 @@ void KekulizeFragment(RWMol &mol, const boost::dynamic_bitset<> &atomsToUse,
 
     // first find all the simple rings in the molecule that are not
     // completely composed of dummy atoms
-    VECT_INT_VECT allringsSSSR;
     if (!mol.getRingInfo()->isInitialized()) {
-      MolOps::findSSSR(mol, allringsSSSR);
+      MolOps::findSSSR(mol);
     }
-    const VECT_INT_VECT &allrings =
-        allringsSSSR.empty() ? mol.getRingInfo()->atomRings() : allringsSSSR;
+    const auto allrings = mol.getRingInfo()->atomRings();
     std::deque<INT_VECT> tmpRings;
-    auto containsNonDummy = [&atomsToUse, &dummyAts](const INT_VECT &ring) {
+    auto containsNonDummy = [&atomsToUse,
+                             &dummyAts](std::span<const int> ring) {
       bool ringOk = false;
       for (auto ai : ring) {
         if (!atomsToUse[ai]) {
@@ -670,9 +680,9 @@ void KekulizeFragment(RWMol &mol, const boost::dynamic_bitset<> &atomsToUse,
     };
     // we can't just copy the rings over: we're going to rearrange them so that
     // we try to favor starting the traversal of any ring from an atom that is
-    // at the end of a wedged ring bond. This is part of our attempt to avoid
+    // at the beginning of a wedged ring bond. This is part of our attempt to avoid
     // assigning double bonds to bonds with wedging
-    for (const auto &ring : allrings) {
+    for (const auto ring : allrings) {
       if (containsNonDummy(ring)) {
         unsigned int startPos = 0;
         bool hasWedge = false;
@@ -685,18 +695,19 @@ void KekulizeFragment(RWMol &mol, const boost::dynamic_bitset<> &atomsToUse,
         }
         INT_VECT nring(ring.size());
         for (auto ri = 0u; ri < ring.size(); ++ri) {
-          nring[ri] = ring.at((ri + startPos) % ring.size());
+          nring[ri] = ring[(ri + startPos) % ring.size()];
         }
         if (!hasWedge) {
-          tmpRings.push_back(nring);
+          tmpRings.push_back(std::move(nring));
         } else {
-          tmpRings.push_front(nring);
+          tmpRings.push_front(std::move(nring));
         }
       }
     }
     VECT_INT_VECT arings;
     arings.reserve(allrings.size());
-    arings.insert(arings.end(), tmpRings.begin(), tmpRings.end());
+    arings.insert(arings.end(), std::make_move_iterator(tmpRings.begin()),
+                  std::make_move_iterator(tmpRings.end()));
     VECT_INT_VECT allbrings;
     RingUtils::convertToBonds(arings, allbrings, mol);
     VECT_INT_VECT brings;

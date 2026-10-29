@@ -758,7 +758,7 @@ Count Ring Systems
 
 .. testoutput::
 
-   [{1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12}, {14, 15, 16, 17, 18, 19}]
+   [{14, 15, 16, 17, 18, 19}, {1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12}]
 
 .. testcode::
 
@@ -2153,7 +2153,7 @@ use GetTotalNumHs(); the total number of Hs for each atom is one:
     from rdkit import Chem
     pyrrole = Chem.MolFromSmiles('C1=CNC=C1')
     for atom in pyrrole.GetAtoms():
-       print(atom.GetSymbol(), atom.GetExplicitValence(), atom.GetTotalNumHs())
+       print(atom.GetSymbol(), atom.GetValence(Chem.ValenceType.EXPLICIT), atom.GetTotalNumHs())
 
 .. testoutput::
 
@@ -2176,7 +2176,7 @@ in the SMILES, it becomes an "explicit" hydrogen as far as atom.GetNumExplicitHs
 .. testcode::
 
    for atom in pyrrole.GetAtoms():
-       print(atom.GetSymbol(), atom.GetExplicitValence(), atom.GetNumImplicitHs(), atom.GetNumExplicitHs(), atom.GetTotalNumHs())
+       print(atom.GetSymbol(), atom.GetValence(Chem.ValenceType.EXPLICIT), atom.GetNumImplicitHs(), atom.GetNumExplicitHs(), atom.GetTotalNumHs())
 
 .. testoutput::
 
@@ -2189,7 +2189,7 @@ in the SMILES, it becomes an "explicit" hydrogen as far as atom.GetNumExplicitHs
 .. testcode::
    
     for atom in mol1.GetAtoms():
-       print(atom.GetSymbol(), atom.GetExplicitValence(), atom.GetNumImplicitHs(), atom.GetNumExplicitHs(), atom.GetTotalNumHs())
+       print(atom.GetSymbol(), atom.GetValence(Chem.ValenceType.EXPLICIT), atom.GetNumImplicitHs(), atom.GetNumExplicitHs(), atom.GetTotalNumHs())
 
 .. testoutput::
 
@@ -2202,7 +2202,7 @@ in the SMILES, it becomes an "explicit" hydrogen as far as atom.GetNumExplicitHs
 .. testcode::
     
     for atom in mol2.GetAtoms():
-       print(atom.GetSymbol(), atom.GetExplicitValence(), atom.GetNumImplicitHs(), atom.GetNumExplicitHs(), atom.GetTotalNumHs())
+       print(atom.GetSymbol(), atom.GetValence(Chem.ValenceType.EXPLICIT), atom.GetNumImplicitHs(), atom.GetNumExplicitHs(), atom.GetTotalNumHs())
 
 .. testoutput::
 
@@ -2285,7 +2285,7 @@ Organometallics with Dative Bonds
         for metal in metals:
             for nbr in metal.GetNeighbors():
                 if nbr.GetAtomicNum() in fromAtoms and \
-                   nbr.GetExplicitValence()>pt.GetDefaultValence(nbr.GetAtomicNum()) and \
+                   nbr.GetValence(Chem.ValenceType.EXPLICIT)>pt.GetDefaultValence(nbr.GetAtomicNum()) and \
                    rwmol.GetBondBetweenAtoms(nbr.GetIdx(),metal.GetIdx()).GetBondType() == Chem.BondType.SINGLE:
                     rwmol.RemoveBond(nbr.GetIdx(),metal.GetIdx())
                     rwmol.AddBond(nbr.GetIdx(),metal.GetIdx(),Chem.BondType.DATIVE)
@@ -2551,7 +2551,7 @@ To use the EmbedParameter for conformer generation:
 .. testcode::
 
    params.useRandomCoords = True
-   # Note this is only an illustrative example, hydrogens are not added before conformer generation to keep the indices apparant 
+   # Note this is only an illustrative example, hydrogens are not added before conformer generation to keep the indices apparent 
    AllChem.EmbedMultipleConfs(mol, numConfs = 3 , params = params)
 
 Both of these setters can be used to help sampling all kinds of molecules as the users see fit. Nevertheless, to facilitate using them in conformer generation of macrocycles, we devised the python package github.com/rinikerlab/cpeptools to provide chemcially intuitive bound matrices and CPCIs for macrocycles. Example usage cases are shown in the README.

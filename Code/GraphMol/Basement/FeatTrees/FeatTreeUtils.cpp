@@ -1,4 +1,3 @@
-// $Id$
 //
 //  Copyright (C) 2005-2006 Rational Discovery LLC
 //
@@ -124,11 +123,10 @@ void mergeRingCycle(FeatTreeGraph &featGraph, FeatTreeGraph &featGraphCopy,
 // -----------------------------------------------------------------------
 void addRingsAndConnectors(const ROMol &mol, FeatTreeGraph &resGraph) {
   RingInfo *ringInfo = mol.getRingInfo();
+  const auto atomRings = ringInfo->atomRings();
   unsigned int ringIdxI = 0;
-  for (VECT_INT_VECT::const_iterator ringItI = ringInfo->atomRings().begin();
-       ringItI != ringInfo->atomRings().end(); ++ringItI, ++ringIdxI) {
-    UINT_SET s;
-    s.insert(ringItI->begin(), ringItI->end());
+  for (const auto ringIView : atomRings) {
+    UINT_SET s(ringIView.begin(), ringIView.end());
     boost::add_vertex(FeatTreeNode(s), resGraph);
 
     // ------ ------ ------ ------
@@ -136,14 +134,11 @@ void addRingsAndConnectors(const ROMol &mol, FeatTreeGraph &resGraph) {
     // ------ ------ ------ ------
     // sort a copy of this ring's atoms so that it's easier to
     // search for overlaps:
-    INT_VECT ringI = *ringItI;
+    INT_VECT ringI(ringIView.begin(), ringIView.end());
     std::sort(ringI.begin(), ringI.end());
-    unsigned int ringIdxJ = 0;
-    for (VECT_INT_VECT::const_iterator ringItJ = ringInfo->atomRings().begin();
-         ringItJ != ringItI; ++ringItJ, ++ringIdxJ) {
-      for (INT_VECT::const_iterator ringJElem = ringItJ->begin();
-           ringJElem != ringItJ->end(); ++ringJElem) {
-        if (std::binary_search(ringI.begin(), ringI.end(), *ringJElem)) {
+    for (unsigned int ringIdxJ = 0; ringIdxJ < ringIdxI; ++ringIdxJ) {
+      for (const auto ringJElem : atomRings[ringIdxJ]) {
+        if (std::binary_search(ringI.begin(), ringI.end(), ringJElem)) {
           // these two rings share a common atom, so set up an
           // edge between them in the feature tree:
           boost::add_edge(ringIdxI, ringIdxJ, FeatTreeEdge(2), resGraph);
@@ -153,6 +148,7 @@ void addRingsAndConnectors(const ROMol &mol, FeatTreeGraph &resGraph) {
         }
       }
     }
+    ++ringIdxI;
   }
 }
 

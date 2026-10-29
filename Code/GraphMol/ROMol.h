@@ -24,13 +24,15 @@
 #include <utility>
 #include <map>
 #include <ranges>
-#include <limits>
+#include <list>
+#include <vector>
 
 // boost stuff
 #include <RDGeneral/BoostStartInclude.h>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/smart_ptr.hpp>
 #include <boost/dynamic_bitset.hpp>
+#include <boost/graph/graph_selectors.hpp>
 
 #ifdef RDK_USE_BOOST_SERIALIZATION
 #include <boost/serialization/split_member.hpp>
@@ -52,9 +54,8 @@ class SubstanceGroup;
 class Atom;
 class Bond;
 //! This is the BGL type used to store the topology:
-typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS,
-                              Atom *, Bond *>
-    MolGraph;
+using MolGraph = boost::adjacency_list<boost::vecS, boost::vecS,
+                                       boost::undirectedS, Atom *, Bond *>;
 class MolPickler;
 class RWMol;
 class QueryAtom;
@@ -113,7 +114,8 @@ RDKIT_GRAPHMOL_EXPORT extern const int ci_ATOM_HOLDER;
 //! \name C++11 Iterators
 
 template <class Graph, class Vertex,
-          class Iterator = typename Graph::vertex_iterator>
+          class Iterator = typename Graph::vertex_iterator,
+          bool CheckedAtoms = false, bool CheckedBonds = false>
 struct CXXAtomIterator {
   Graph *graph;
   Iterator vstart, vend;
@@ -128,57 +130,95 @@ struct CXXAtomIterator {
 
     Graph *graph = nullptr;
     Iterator pos;
+    size_t osizeAtoms{0};
+    size_t osizeBonds{0};
+
+    inline void checkIterator() const {
+      if constexpr (CheckedAtoms) {
+        if (boost::num_vertices(*graph) != osizeAtoms) {
+          throw std::runtime_error("molecule modified during iteration");
+        }
+      }
+      if constexpr (CheckedBonds) {
+        if (boost::num_edges(*graph) != osizeBonds) {
+          throw std::runtime_error("molecule modified during iteration");
+        }
+      }
+    }
 
     CXXAtomIter() {};
 
-    CXXAtomIter(Graph *graph, Iterator pos) : graph(graph), pos(pos) {}
+    CXXAtomIter(Graph *graph, Iterator pos) : graph(graph), pos(pos) {
+      if constexpr (CheckedAtoms) {
+        osizeAtoms = boost::num_vertices(*graph);
+      }
+      if constexpr (CheckedBonds) {
+        osizeBonds = boost::num_edges(*graph);
+      }
+    }
 
     // we only return const references since we don't want clients modifying the
     // graph itself through these iterators
-    const_reference operator*() const { return (*graph)[*pos]; }
+    const_reference operator*() const {
+      checkIterator();
+      return (*graph)[*pos];
+    }
+
     // we only return const references since we don't want clients modifying the
     // graph itself through these iterators
     const_reference operator[](difference_type n) const {
+      checkIterator();
       return (*graph)[*(pos + n)];
     }
 
     CXXAtomIter &operator++() {
+      checkIterator();
       ++pos;
       return *this;
     }
     CXXAtomIter operator++(int) {
+      checkIterator();
       CXXAtomIter tmp = *this;
       ++(*this);
       return tmp;
     }
     CXXAtomIter &operator--() {
+      checkIterator();
       --pos;
       return *this;
     }
     CXXAtomIter operator+(difference_type n) const {
+      checkIterator();
       return CXXAtomIter(graph, pos + n);
     }
     CXXAtomIter operator-(difference_type n) const {
+      checkIterator();
       return CXXAtomIter(graph, pos - n);
     }
 
     CXXAtomIter operator--(int) {
+      checkIterator();
       CXXAtomIter tmp = *this;
       --(*this);
       return tmp;
     }
     CXXAtomIter &operator+=(difference_type n) {
+      checkIterator();
       pos += n;
       return *this;
     }
     CXXAtomIter &operator-=(difference_type n) {
+      checkIterator();
       pos -= n;
       return *this;
     }
     difference_type operator-(const CXXAtomIter &other) const {
+      checkIterator();
+      other.checkIterator();
       return pos - other.pos;
     }
     friend CXXAtomIter operator+(difference_type n, const CXXAtomIter &it) {
+      it.checkIterator();
       return CXXAtomIter(it.graph, it.pos + n);
     }
 
@@ -211,7 +251,7 @@ static_assert(
 // clang-format on
 
 template <class Graph, class Edge,
-          class Iterator = typename Graph::edge_iterator>
+          class Iterator = typename Graph::edge_iterator, bool Checked = false>
 struct CXXBondIterator {
   Graph *graph;
   Iterator vstart, vend;
@@ -226,27 +266,47 @@ struct CXXBondIterator {
 
     Graph *graph = nullptr;
     Iterator pos;
+    size_t osize{0};
+
+    inline void checkIterator() const {
+      if constexpr (Checked) {
+        if (boost::num_edges(*graph) != osize) {
+          throw std::runtime_error("molecule modified during iteration");
+        }
+      }
+    }
 
     CXXBondIter() {};
 
-    CXXBondIter(Graph *graph, Iterator pos) : graph(graph), pos(pos) {}
+    CXXBondIter(Graph *graph, Iterator pos) : graph(graph), pos(pos) {
+      if constexpr (Checked) {
+        osize = boost::num_edges(*graph);
+      }
+    }
     // we only return const references since we don't want clients modifying the
     // graph itself through these iterators
-    const_reference operator*() const { return (*graph)[*pos]; }
+    const_reference operator*() const {
+      checkIterator();
+      return (*graph)[*pos];
+    }
     CXXBondIter &operator++() {
+      checkIterator();
       ++pos;
       return *this;
     }
     CXXBondIter operator++(int) {
+      checkIterator();
       CXXBondIter tmp = *this;
       ++(*this);
       return tmp;
     }
     CXXBondIter &operator--() {
+      checkIterator();
       --pos;
       return *this;
     }
     CXXBondIter operator--(int) {
+      checkIterator();
       CXXBondIter tmp = *this;
       --(*this);
       return tmp;
@@ -291,61 +351,59 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
 
   //! \name typedefs
   //! @{
-  typedef MolGraph::vertex_descriptor vertex_descriptor;
-  typedef MolGraph::edge_descriptor edge_descriptor;
+  using vertex_descriptor = MolGraph::vertex_descriptor;
+  using edge_descriptor = MolGraph::edge_descriptor;
 
-  typedef MolGraph::edge_iterator EDGE_ITER;
-  typedef MolGraph::out_edge_iterator OEDGE_ITER;
-  typedef MolGraph::vertex_iterator VERTEX_ITER;
-  typedef MolGraph::adjacency_iterator ADJ_ITER;
-  typedef std::pair<EDGE_ITER, EDGE_ITER> BOND_ITER_PAIR;
-  typedef std::pair<OEDGE_ITER, OEDGE_ITER> OBOND_ITER_PAIR;
-  typedef std::pair<VERTEX_ITER, VERTEX_ITER> ATOM_ITER_PAIR;
-  typedef std::pair<ADJ_ITER, ADJ_ITER> ADJ_ITER_PAIR;
+  using EDGE_ITER = MolGraph::edge_iterator;
+  using OEDGE_ITER = MolGraph::out_edge_iterator;
+  using VERTEX_ITER = MolGraph::vertex_iterator;
+  using ADJ_ITER = MolGraph::adjacency_iterator;
+  using BOND_ITER_PAIR = std::pair<EDGE_ITER, EDGE_ITER>;
+  using OBOND_ITER_PAIR = std::pair<OEDGE_ITER, OEDGE_ITER>;
+  using ATOM_ITER_PAIR = std::pair<VERTEX_ITER, VERTEX_ITER>;
+  using ADJ_ITER_PAIR = std::pair<ADJ_ITER, ADJ_ITER>;
 
-  typedef std::vector<Atom *> ATOM_PTR_VECT;
-  typedef ATOM_PTR_VECT::iterator ATOM_PTR_VECT_I;
-  typedef ATOM_PTR_VECT::const_iterator ATOM_PTR_VECT_CI;
-  typedef std::vector<Bond *> BOND_PTR_VECT;
-  typedef BOND_PTR_VECT::iterator BOND_PTR_VECT_I;
-  typedef BOND_PTR_VECT::const_iterator BOND_PTR_VECT_CI;
+  using ATOM_PTR_VECT = std::vector<Atom *>;
+  using ATOM_PTR_VECT_I = ATOM_PTR_VECT::iterator;
+  using ATOM_PTR_VECT_CI = ATOM_PTR_VECT::const_iterator;
+  using BOND_PTR_VECT = std::vector<Bond *>;
+  using BOND_PTR_VECT_I = BOND_PTR_VECT::iterator;
+  using BOND_PTR_VECT_CI = BOND_PTR_VECT::const_iterator;
 
-  typedef std::list<Atom *> ATOM_PTR_LIST;
-  typedef ATOM_PTR_LIST::iterator ATOM_PTR_LIST_I;
-  typedef ATOM_PTR_LIST::const_iterator ATOM_PTR_LIST_CI;
-  typedef std::list<Bond *> BOND_PTR_LIST;
-  typedef BOND_PTR_LIST::iterator BOND_PTR_LIST_I;
-  typedef BOND_PTR_LIST::const_iterator BOND_PTR_LIST_CI;
+  using ATOM_PTR_LIST = std::list<Atom *>;
+  using ATOM_PTR_LIST_I = ATOM_PTR_LIST::iterator;
+  using ATOM_PTR_LIST_CI = ATOM_PTR_LIST::const_iterator;
+  using BOND_PTR_LIST = std::list<Bond *>;
+  using BOND_PTR_LIST_I = BOND_PTR_LIST::iterator;
+  using BOND_PTR_LIST_CI = BOND_PTR_LIST::const_iterator;
 
   // list of conformations
-  typedef std::list<CONFORMER_SPTR> CONF_SPTR_LIST;
-  typedef CONF_SPTR_LIST::iterator CONF_SPTR_LIST_I;
-  typedef CONF_SPTR_LIST::const_iterator CONF_SPTR_LIST_CI;
-  typedef std::pair<CONF_SPTR_LIST_I, CONF_SPTR_LIST_I> CONFS_I_PAIR;
+  using CONF_SPTR_LIST = std::list<CONFORMER_SPTR>;
+  using CONF_SPTR_LIST_I = CONF_SPTR_LIST::iterator;
+  using CONF_SPTR_LIST_CI = CONF_SPTR_LIST::const_iterator;
+  using CONFS_I_PAIR = std::pair<CONF_SPTR_LIST_I, CONF_SPTR_LIST_I>;
 
   // ROFIX: these will need to be readonly somehow?
-  typedef std::map<int, ATOM_PTR_LIST> ATOM_BOOKMARK_MAP;
-  typedef std::map<int, BOND_PTR_LIST> BOND_BOOKMARK_MAP;
+  using ATOM_BOOKMARK_MAP = std::map<int, ATOM_PTR_LIST>;
+  using BOND_BOOKMARK_MAP = std::map<int, BOND_PTR_LIST>;
 
-  typedef class AtomIterator_<Atom, ROMol> AtomIterator;
-  typedef class AtomIterator_<const Atom, const ROMol> ConstAtomIterator;
-  typedef class BondIterator_ BondIterator;
-  typedef class ConstBondIterator_ ConstBondIterator;
-  typedef class AromaticAtomIterator_<Atom, ROMol> AromaticAtomIterator;
-  typedef class AromaticAtomIterator_<const Atom, const ROMol>
-      ConstAromaticAtomIterator;
-  typedef class HeteroatomIterator_<Atom, ROMol> HeteroatomIterator;
-  typedef class HeteroatomIterator_<const Atom, const ROMol>
-      ConstHeteroatomIterator;
-  typedef class QueryAtomIterator_<Atom, ROMol> QueryAtomIterator;
-  typedef class QueryAtomIterator_<const Atom, const ROMol>
-      ConstQueryAtomIterator;
-  typedef class MatchingAtomIterator_<Atom, ROMol> MatchingAtomIterator;
-  typedef class MatchingAtomIterator_<const Atom, const ROMol>
-      ConstMatchingAtomIterator;
+  using AtomIterator = AtomIterator_<Atom, ROMol>;
+  using ConstAtomIterator = AtomIterator_<const Atom, const ROMol>;
+  using BondIterator = BondIterator_;
+  using ConstBondIterator = ConstBondIterator_;
+  using AromaticAtomIterator = AromaticAtomIterator_<Atom, ROMol>;
+  using ConstAromaticAtomIterator =
+      AromaticAtomIterator_<const Atom, const ROMol>;
+  using HeteroatomIterator = HeteroatomIterator_<Atom, ROMol>;
+  using ConstHeteroatomIterator = HeteroatomIterator_<const Atom, const ROMol>;
+  using QueryAtomIterator = QueryAtomIterator_<Atom, ROMol>;
+  using ConstQueryAtomIterator = QueryAtomIterator_<const Atom, const ROMol>;
+  using MatchingAtomIterator = MatchingAtomIterator_<Atom, ROMol>;
+  using ConstMatchingAtomIterator =
+      MatchingAtomIterator_<const Atom, const ROMol>;
 
-  typedef CONF_SPTR_LIST_I ConformerIterator;
-  typedef CONF_SPTR_LIST_CI ConstConformerIterator;
+  using ConformerIterator = CONF_SPTR_LIST_I;
+  using ConstConformerIterator = CONF_SPTR_LIST_CI;
 
   //! @}
   //! \endcond
@@ -363,6 +421,17 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
   CXXAtomIterator<MolGraph, Atom *> atoms() { return {&d_graph}; }
 
   CXXAtomIterator<const MolGraph, Atom *const> atoms() const {
+    return {&d_graph};
+  }
+  // returns an iterator that will throw if the number of atoms changes during
+  // iteration
+  CXXAtomIterator<MolGraph, Atom *, MolGraph::vertex_iterator, true>
+  checkedAtoms() {
+    return {&d_graph};
+  }
+  // \overload
+  CXXAtomIterator<const MolGraph, Atom *const, MolGraph::vertex_iterator, true>
+  checkedAtoms() const {
     return {&d_graph};
   }
 
@@ -390,6 +459,36 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
     return {&d_graph, pr.first, pr.second};
   }
 
+  // returns an iterator that will throw if the number of atoms or bonds changes
+  // during iteration
+  CXXAtomIterator<const MolGraph, Atom *const, MolGraph::adjacency_iterator,
+                  true, true>
+  checkedAtomNeighbors(Atom const *at) const {
+    auto pr = getAtomNeighbors(at);
+    return {&d_graph, pr.first, pr.second};
+  }
+  // \overload
+  CXXAtomIterator<MolGraph, Atom *, MolGraph::adjacency_iterator, true, true>
+  checkedAtomNeighbors(Atom const *at) {
+    auto pr = getAtomNeighbors(at);
+    return {&d_graph, pr.first, pr.second};
+  }
+
+  // returns an iterator that will throw if the number of bonds changes during
+  // iteration
+  CXXBondIterator<const MolGraph, Bond *const, MolGraph::out_edge_iterator,
+                  true>
+  checkedAtomBonds(Atom const *at) const {
+    auto pr = getAtomBonds(at);
+    return {&d_graph, pr.first, pr.second};
+  }
+  // \overload
+  CXXBondIterator<MolGraph, Bond *, MolGraph::out_edge_iterator, true>
+  checkedAtomBonds(Atom const *at) {
+    auto pr = getAtomBonds(at);
+    return {&d_graph, pr.first, pr.second};
+  }
+
   /*!
   <b>Usage</b>
   \code
@@ -404,6 +503,17 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
   CXXBondIterator<const MolGraph, Bond *const> bonds() const {
     return {&d_graph};
   }
+  // returns an iterator that will throw if the number of bonds changes during
+  // iteration
+  CXXBondIterator<MolGraph, Bond *, MolGraph::edge_iterator, true>
+  checkedBonds() {
+    return {&d_graph};
+  }
+  // \overload
+  CXXBondIterator<const MolGraph, Bond *const, MolGraph::edge_iterator, true>
+  checkedBonds() const {
+    return {&d_graph};
+  }
 
   ROMol() : RDProps() { initMol(); }
 
@@ -411,12 +521,12 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
   /*!
     \param other     the molecule to be copied
     \param quickCopy (optional) if this is true, the resulting ROMol will not
-         copy any of the properties or bookmarks and conformers from \c other.
+         copy any of the properties or bookmarks and conformers from \c other,
+          and \c confId is ignored.
     This can
          make the copy substantially faster (thus the name).
-    \param confId (optional) if this is >=0, the resulting ROMol will contain
-    only
-         the specified conformer from \c other.
+    \param confId (optional) if this is >=0 and \c quickCopy is false, the
+    resulting ROMol will contain only the specified conformer from \c other.
   */
   ROMol(const ROMol &other, bool quickCopy = false, int confId = -1)
       : RDProps() {
@@ -460,14 +570,14 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
     if (this == &o) {
       return *this;
     }
+    // d_graph owns its atom and bond pointers, so release the current graph
+    // before replacing its containers with those from o.
+    destroy();
+    dp_ringInfo = std::exchange(o.dp_ringInfo, nullptr);
     RDProps::operator=(std::move(o));
     d_graph = std::move(o.d_graph);
     d_atomBookmarks = std::move(o.d_atomBookmarks);
     d_bondBookmarks = std::move(o.d_bondBookmarks);
-    if (dp_ringInfo) {
-      delete dp_ringInfo;
-    }
-    dp_ringInfo = std::exchange(o.dp_ringInfo, nullptr);
 
     d_confs = std::move(o.d_confs);
     d_sgroups = std::move(o.d_sgroups);
@@ -808,9 +918,9 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
   bool hasQuery() const;
 
   //! get an AtomIterator pointing at our first Atom that matches \c query
-  QueryAtomIterator beginQueryAtoms(QueryAtom const *query);
+  QueryAtomIterator beginQueryAtoms(Atom const *query);
   //! \overload
-  ConstQueryAtomIterator beginQueryAtoms(QueryAtom const *) const;
+  ConstQueryAtomIterator beginQueryAtoms(Atom const *query) const;
   //! get an AtomIterator pointing at the end of our Atoms
   QueryAtomIterator endQueryAtoms();
   //! \overload
@@ -841,6 +951,11 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
   //! \name Properties
   //! @{
 
+  //! sets the molecule name/title; equivalent to setting the \c _Name property
+  void setName(const std::string &name) const;
+  //! gets the molecule name/title stored in \c _Name, or an empty string if
+  //! absent
+  std::string getName() const;
   //! clears all of our \c computed \c properties
   void clearComputedProps(bool includeRings = true) const;
   //! calculates any of our lazy \c properties
@@ -960,13 +1075,12 @@ class RDKIT_GRAPHMOL_EXPORT ROMol : public RDProps {
   void initFromOther(const ROMol &other, bool quickCopy, int confId);
 };
 
-typedef std::vector<ROMol> MOL_VECT;
-typedef boost::shared_ptr<ROMol> ROMOL_SPTR;
-typedef std::vector<ROMol *> MOL_PTR_VECT;
-typedef std::vector<ROMOL_SPTR> MOL_SPTR_VECT;
+using MOL_VECT = std::vector<ROMol>;
+using ROMOL_SPTR = boost::shared_ptr<ROMol>;
+using MOL_PTR_VECT = std::vector<ROMol *>;
+using MOL_SPTR_VECT = std::vector<ROMOL_SPTR>;
 
-typedef MOL_PTR_VECT::const_iterator MOL_PTR_VECT_CI;
-typedef MOL_PTR_VECT::iterator MOL_PTR_VECT_I;
-
+using MOL_PTR_VECT_CI = MOL_PTR_VECT::const_iterator;
+using MOL_PTR_VECT_I = MOL_PTR_VECT::iterator;
 };  // namespace RDKit
 #endif

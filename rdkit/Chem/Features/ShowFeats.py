@@ -55,16 +55,17 @@ _canonArrowhead = None
 
 def _buildCanonArrowhead(headFrac, nSteps, aspect):
   global _canonArrowhead
-  startP = RDGeometry.Point3D(0, 0, headFrac)
+  startP = Geometry.Point3D(0, 0, headFrac)
   _canonArrowhead = [startP]
 
   scale = headFrac * aspect
-  baseV = RDGeometry.Point3D(scale, 0, 0)
+  baseV = Geometry.Point3D(scale, 0, 0)
   _canonArrowhead.append(baseV)
 
   twopi = 2 * math.pi
   for i in range(1, nSteps):
-    v = RDGeometry.Point3D(scale * math.cos(i * twopi), scale * math.sin(i * twopi), 0)
+    angle = i * twopi / nSteps
+    v = Geometry.Point3D(scale * math.cos(angle), scale * math.sin(angle), 0)
     _canonArrowhead.append(v)
 
 

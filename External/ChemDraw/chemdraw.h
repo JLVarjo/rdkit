@@ -45,14 +45,44 @@ enum class CDXFormat {
   AUTO = 3
 };
 
+enum class NeedsCleanPolicy {
+  TrustSource = 0,
+  TrustExplicitHydrogens = 1,
+};
+
 struct RDKIT_RDCHEMDRAWLIB_EXPORT ChemDrawParserParams {
   bool sanitize;
   bool removeHs;
   CDXFormat format;
+  NeedsCleanPolicy needsCleanPolicy;
+  bool parseQueries;
+  bool strictQueryParsing;
+  
   ChemDrawParserParams()
-      : sanitize(true), removeHs(true), format(CDXFormat::AUTO) {}
+            : sanitize(true),
+                removeHs(true),
+                format(CDXFormat::AUTO),
+		needsCleanPolicy(NeedsCleanPolicy::TrustSource),
+		parseQueries(false),
+		strictQueryParsing(false) {}
+		
   ChemDrawParserParams(bool sanitize, bool removeHs, CDXFormat format)
-      : sanitize(sanitize), removeHs(removeHs), format(format) {}
+            : sanitize(sanitize),
+                removeHs(removeHs),
+                format(format),
+		needsCleanPolicy(NeedsCleanPolicy::TrustSource),
+		parseQueries(false),
+		strictQueryParsing(false) {}
+
+  ChemDrawParserParams(bool sanitize, bool removeHs, CDXFormat format,
+		       NeedsCleanPolicy policy,
+		       bool parseQueries, bool strictQueryParsing)
+            : sanitize(sanitize),
+                removeHs(removeHs),
+                format(format),
+		needsCleanPolicy(policy),
+		parseQueries(parseQueries),
+		strictQueryParsing(strictQueryParsing) {}
 };
 
 std::vector<std::unique_ptr<RWMol>> RDKIT_RDCHEMDRAWLIB_EXPORT

@@ -1,5 +1,6 @@
 import doctest
 import os
+import pickle
 import unittest
 
 from rdkit import Chem
@@ -50,10 +51,12 @@ class TestCase(unittest.TestCase):
     self.assertEqual(m, mol)
 
   def test_withUseChirality(self):
-    chiralRemover = SaltRemover(defnData="OC(=O)\C=C/C(O)=O\nOC(=O)/C=C/C(O)=O", defnFormat=InputFormat.SMILES, useChirality=True)
-    remover = SaltRemover(defnData="OC(=O)\C=C/C(O)=O\nOC(=O)/C=C/C(O)=O", defnFormat=InputFormat.SMILES, useChirality=False)
-    
-    maleaic_acid_smiles = Chem.MolToSmiles(Chem.MolFromSmiles('OC(=O)\C=C/C(O)=O'))
+    chiralRemover = SaltRemover(defnData="OC(=O)\\C=C/C(O)=O\nOC(=O)/C=C/C(O)=O",
+                                defnFormat=InputFormat.SMILES, useChirality=True)
+    remover = SaltRemover(defnData="OC(=O)\\C=C/C(O)=O\nOC(=O)/C=C/C(O)=O",
+                          defnFormat=InputFormat.SMILES, useChirality=False)
+
+    maleaic_acid_smiles = Chem.MolToSmiles(Chem.MolFromSmiles('OC(=O)\\C=C/C(O)=O'))
     fumaric_acid_smiles = Chem.MolToSmiles(Chem.MolFromSmiles('OC(=O)/C=C/C(O)=O'))
 
     m = Chem.MolFromSmiles('OC(=O)C=CC(O)=O')
@@ -127,7 +130,14 @@ class TestCase(unittest.TestCase):
     q = Chem.MolFromSmarts('[!$([NH]!@C(=O))&!D1&!$(*#*)]-&!@[!$([NH]!@C(=O))&!D1&!$(*#*)]')
     assert q
 
-    assert m.GetSubstructMatches(q) == ((1, 2), )
+    assert list(list(x) for x in m.GetSubstructMatches(q)) == [[1, 2]]
+
+  def test_strippedMolIsPicklable(self):
+    remover = SaltRemover(defnData="[Cl,Br]")
+    stripped = remover.StripMolWithDeleted(Chem.MolFromSmiles('CN(C)C.Cl'))
+    mol, deleted = pickle.loads(pickle.dumps(stripped))
+    self.assertEqual(Chem.MolToSmiles(mol), 'CN(C)C')
+    self.assertEqual([Chem.MolToSmarts(m) for m in deleted], ['[Cl,Br]'])
 
 
 if __name__ == '__main__':  # pragma: nocover

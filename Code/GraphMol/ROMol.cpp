@@ -549,11 +549,10 @@ bool ROMol::hasQuery() const {
   return false;
 }
 
-ROMol::QueryAtomIterator ROMol::beginQueryAtoms(QueryAtom const *what) {
+ROMol::QueryAtomIterator ROMol::beginQueryAtoms(Atom const *what) {
   return QueryAtomIterator(this, what);
 }
-ROMol::ConstQueryAtomIterator ROMol::beginQueryAtoms(
-    QueryAtom const *what) const {
+ROMol::ConstQueryAtomIterator ROMol::beginQueryAtoms(Atom const *what) const {
   return ConstQueryAtomIterator(this, what);
 }
 ROMol::QueryAtomIterator ROMol::endQueryAtoms() {
@@ -587,6 +586,16 @@ ROMol::BondIterator ROMol::endBonds() {
 ROMol::ConstBondIterator ROMol::endBonds() const {
   auto [beg, end] = getEdges();
   return ConstBondIterator(this, end);
+}
+
+void ROMol::setName(const std::string &name) const {
+  setProp(common_properties::_Name, name);
+}
+
+std::string ROMol::getName() const {
+  std::string name;
+  getPropIfPresent(common_properties::_Name, name);
+  return name;
 }
 
 void ROMol::clearComputedProps(bool includeRings) const {

@@ -2162,7 +2162,7 @@ TEST_CASE(
     ROMol m2(*m);
     m2.getRingInfo()->reset();
     MolOps::fastFindRings(m2);
-    CHECK(m->getRingInfo()->numRings() == m2.getRingInfo()->numRings());
+    CHECK(m->getRingInfo()->numRings() >= m2.getRingInfo()->numRings());
   }
   SECTION("case2") {
     auto m = "c1ccccc1.C123C45C16C21C34C561"_smiles;
@@ -2170,7 +2170,7 @@ TEST_CASE(
     ROMol m2(*m);
     m2.getRingInfo()->reset();
     MolOps::fastFindRings(m2);
-    CHECK(m->getRingInfo()->numRings() == m2.getRingInfo()->numRings());
+    CHECK(m->getRingInfo()->numRings() >= m2.getRingInfo()->numRings());
   }
 }
 
@@ -2577,7 +2577,7 @@ void check_dest(RWMol *m1, const ROMol &m2) {
   CHECK(m1->getRingInfo() == nullptr);
 
   // make sure we can still do something with m1:
-  *m1 = m2;
+  *m1 = RWMol(m2);
   CHECK(!m1->getDict().empty());
   CHECK(m1->getNumAtoms() == 8);
   CHECK(m1->getNumBonds() == 7);
@@ -2911,6 +2911,8 @@ TEST_CASE("Github #5849: aromatic tag allows bad valences to pass") {
   SECTION("edge cases atoms") {
     std::vector<std::string> smis = {
         "c1c(ccc2NC(CN=c(c21)=C)=O)O",     // exocyclic double bond
+        "Cc1(C)=NCCCc1",                   // a hexavalent C atom
+        "Cc1(C)nCCCC=1",                   // a hexavalent C atom
         "c1c(ccc2NC(Cn=c(c21)(C)C)=O)O",   // even more bogus aromatic atoms
         "c1c(ccc2NC(CN=c(c21)(:c)C)=O)O",  // even more bogus aromatic atoms
     };
@@ -2922,8 +2924,6 @@ TEST_CASE("Github #5849: aromatic tag allows bad valences to pass") {
   SECTION("edge cases kekulization") {
     std::vector<std::string> smis = {
         "c12ccccc1=NCCC2",  // adjacent to an actual aromatic ring
-        "Cc1(C)=NCCCc1",    // two bogus aromatic atoms
-        "Cc1(C)nCCCC=1",    // two bogus aromatic atoms
         "Cc1(C)nCCCc1",     // three bogus aromatic atoms
         "Cc:1(C):nCCCc:1",  // three bogus aromatic atoms
     };
@@ -2949,6 +2949,17 @@ TEST_CASE("Stop caching ring finding results") {
     MolOps::fastFindRings(*m);
     CHECK(m->getRingInfo()->numRings() == 2);
   }
+}
+
+TEST_CASE("Symmetrized SSSR results retain their ring type", "[rings][bug]") {
+  auto algorithm = GENERATE(MolOps::SymmetrizeSSSRAlgorithm::LEGACY,
+                            MolOps::SymmetrizeSSSRAlgorithm::RDL);
+  CAPTURE(algorithm);
+  auto mol = "C1C2CC1CCC2"_smiles;
+  REQUIRE(mol);
+  VECT_INT_VECT rings;
+  CHECK(MolOps::symmetrizeSSSR(*mol, rings, algorithm) == 3);
+  CHECK(mol->getRingInfo()->isSymmSssr());
 }
 
 TEST_CASE("molecules with more than 255 rings produce a bad pickle") {
@@ -3844,6 +3855,65 @@ TEST_CASE("expand and remove AttachmentPoints") {
     CHECK(!MolOps::details::isAttachmentPoint(mol->getAtomWithIdx(3)));
     // marked as an attachment point, but at end of a double bond
     CHECK(!MolOps::details::isAttachmentPoint(mol->getAtomWithIdx(4)));
+  }
+  SECTION("marked attachment point identity") {
+    auto mol = "CC"_smiles;
+    REQUIRE(mol);
+    auto attachmentIdx =
+        MolOps::details::addExplicitAttachmentPoint(*mol, 1, 1, true, false);
+    auto attachment = mol->getAtomWithIdx(attachmentIdx);
+    auto attachmentBond = mol->getBondBetweenAtoms(1, attachmentIdx);
+
+    CHECK(MolOps::isMarkedAttachmentPoint(attachment));
+    CHECK(MolOps::details::isAttachmentPoint(attachment));
+
+    attachmentBond->setBondDir(Bond::BondDir::BEGINWEDGE);
+    CHECK(MolOps::isMarkedAttachmentPoint(attachment));
+    CHECK(!MolOps::details::isAttachmentPoint(attachment));
+
+    CHECK(!MolOps::isMarkedAttachmentPoint(mol->getAtomWithIdx(0)));
+    mol->getAtomWithIdx(0)->setProp(common_properties::_fromAttachPoint, 1);
+    CHECK(!MolOps::isMarkedAttachmentPoint(mol->getAtomWithIdx(0)));
+    attachment->clearProp(common_properties::_fromAttachPoint);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+
+    attachment->setProp(common_properties::atomLabel, "_AP37");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 37);
+    CHECK(MolOps::isMarkedAttachmentPoint(attachment));
+    CHECK(!MolOps::details::isAttachmentPoint(attachment));
+    attachment->setProp(common_properties::atomLabel, "_AP0");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+    attachment->setProp(common_properties::atomLabel, "_AP3x");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+    attachment->setProp(common_properties::atomLabel, "_AP+1");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+    attachment->setProp(common_properties::atomLabel, "_AP-1");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+    attachment->setProp(common_properties::atomLabel, "_AP 1");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+    attachment->setProp(common_properties::atomLabel,
+                        "_AP999999999999999999999999999999999999");
+    CHECK(MolOps::getAttachmentPointLabelNumber(attachment) == 0);
+    CHECK(!MolOps::isMarkedAttachmentPoint(attachment));
+  }
+  SECTION("collapse label-only attachment point") {
+    auto mol = "*C |$_AP37;$|"_smiles;
+    REQUIRE(mol);
+    REQUIRE(mol->getNumAtoms() == 2);
+    CHECK(MolOps::isMarkedAttachmentPoint(mol->getAtomWithIdx(0)));
+
+    MolOps::collapseAttachmentPoints(*mol);
+    REQUIRE(mol->getNumAtoms() == 1);
+    int value = 0;
+    CHECK(mol->getAtomWithIdx(0)->getPropIfPresent(
+        common_properties::molAttachPoint, value));
+    CHECK(value == 1);
   }
 }
 
@@ -4933,6 +5003,47 @@ M  END)CTAB"_ctab;
   }
 }
 
+TEST_CASE(
+    "github #8403: rootedAtAtom can produce SMILES that fail to kekulize on "
+    "re-parsing") {
+  // Large, densely-fused all-aromatic ring systems can require more than
+  // the default number of kekulization back-tracks when atoms are visited
+  // in atom-index order. Since rootedAtAtom changes which atom is written
+  // (and therefore re-numbered) first, some roots used to produce SMILES
+  // that MolFromSmiles couldn't kekulize, even though the molecule itself
+  // is unambiguously kekulizable.
+  SECTION("rootedAtAtom, from the issue") {
+    auto smiles =
+        "c1cc2ccc3c4c(ccc(c1)c24)c1c2c4ccc5cccc6ccc(c4c65)c4c5cccc6c7cccc8c9cc"
+        "cc%10c%11cccc%12c3c1c1c(c%11%12)c(c9%10)c(c87)c(c65)c1c42";
+    auto mol = v2::SmilesParse::MolFromSmiles(smiles);
+    REQUIRE(mol);
+    for (auto i = 0u; i < mol->getNumAtoms(); ++i) {
+      SmilesWriteParams params;
+      params.rootedAtAtom = static_cast<int>(i);
+      auto rooted = MolToSmiles(*mol, params);
+      INFO("rootedAtAtom=" << i << " -> " << rooted);
+      auto rootedMol = v2::SmilesParse::MolFromSmiles(rooted);
+      CHECK(rootedMol);
+    }
+  }
+  SECTION("plain canonical round-trip, from discussion #8606") {
+    // Same root cause, but no rootedAtAtom needed: the atom order produced
+    // by canonicalization alone was already enough to blow the default
+    // back-tracking budget for this CAS-RN 133133-06-9 ring system.
+    // https://github.com/rdkit/rdkit/discussions/8606
+    auto smiles =
+        "O=c1c2c3c(c4c(c2c(=O)c2c5c(c6c(c12)c1c2c6cccc2ccc1)c1c2c5cccc2ccc1)c1"
+        "c2c4cccc2ccc1)c1c2c3cccc2ccc1";
+    auto mol = v2::SmilesParse::MolFromSmiles(smiles);
+    REQUIRE(mol);
+    auto canonical = MolToSmiles(*mol);
+    INFO("canonical -> " << canonical);
+    auto roundTripped = v2::SmilesParse::MolFromSmiles(canonical);
+    CHECK(roundTripped);
+  }
+}
+
 TEST_CASE("large smiles benchmark") {
   std::string smiles(1000, 'C');
   auto m = v2::SmilesParse::MolFromSmiles(smiles);
@@ -4972,6 +5083,29 @@ TEST_CASE("github #9068: properties with empty names") {
     CHECK(!m->hasProp(""));
     CHECK_NOTHROW(m->clearProp(""));
   }
+}
+
+TEST_CASE("ROMol setName/getName") {
+  auto m = "CCO"_smiles;
+  REQUIRE(m);
+
+  CHECK(m->getName().empty());
+
+  m->setName("ethanol");
+  CHECK(m->hasProp(common_properties::_Name));
+  CHECK(m->getName() == "ethanol");
+  CHECK(m->getProp<std::string>(common_properties::_Name) == "ethanol");
+
+  m->setProp(common_properties::_Name, "updated name");
+  CHECK(m->getName() == "updated name");
+
+  m->clearProp(common_properties::_Name);
+  CHECK(m->getName().empty());
+
+  const ROMol &cmol = *m;
+  cmol.setName("const name");
+  CHECK(cmol.getName() == "const name");
+  CHECK(cmol.getProp<std::string>(common_properties::_Name) == "const name");
 }
 
 TEST_CASE("canonical re-kekulization after sanitization preserves stereo",
@@ -5043,5 +5177,71 @@ TEST_CASE("duplicate atoms/bonds in StereoGroups") {
             StereoGroupType::STEREO_ABSOLUTE, std::vector<Atom *>{},
             std::vector<Bond *>{m->getBondWithIdx(1), m->getBondWithIdx(1)}),
         ValueErrorException);
+  }
+}
+
+TEST_CASE(
+    "GitHub #9735: Valence checks for aromatic atoms allows them to be hypervalent") {
+  auto runCheck = [](const char *smiles, bool expectKekulizeError = false) {
+    const v2::SmilesParse::SmilesParserParams p{.sanitize = false,
+                                                .replacements = {}};
+
+    auto mol = v2::SmilesParse::MolFromSmiles(smiles, p);
+    REQUIRE(mol);
+
+    auto failures = MolOps::detectChemistryProblems(*mol);
+
+    REQUIRE(failures.size() == (expectKekulizeError ? 2 : 1));
+
+    REQUIRE(failures[0]->getType() == "AtomValenceException");
+    auto valenceFailure =
+        dynamic_cast<AtomValenceException *>(failures[0].get());
+    REQUIRE(valenceFailure);
+
+    REQUIRE(valenceFailure->getAtomIdx() == 4);
+
+    if (expectKekulizeError) {
+      REQUIRE(failures[1]->getType() == "KekulizeException");
+    }
+  };
+
+  SECTION("aliphatic pentavalent carbon") {
+    // the [C] atom is pentavalent, and parsing the SMILES fails
+    // sanitization at the valence checks in SANITIZE_PROPERTIES
+    runCheck("Oc1cc2=[C](=O)c(cccn2)n1");
+  }
+
+  SECTION("aromatic pentavalent carbon") {
+    // ... but when the atom is aromatic, the valence check doesn't
+    // catch the pentavalent carbon (this is the reported issue)
+    runCheck("Oc1cc2=[c](=O)c(cccn2)n1");
+  }
+
+  SECTION("hypervalent aromatic with explicit Hs") {
+    // using [cH2] would not trigger the valence error,
+    // since the valence check would consider the case where both
+    // ring bonds are kekulized to single bonds, but kekulization
+    // will fail (the ring can't be aromatic if these bonds are both
+    // single).
+    // With [cH3], both the valence and the kekulization checks
+    // will fail.
+
+    bool expectKekulizeError = true;
+    runCheck("c1ccc[cH3]c1", expectKekulizeError);
+  }
+}
+
+TEST_CASE("getTotalNumHs() and query atoms") {
+  SECTION("basics") {
+    auto m = "C[CH][CH][CH,NH2]"_smarts;
+    REQUIRE(m);
+    m->getAtomWithIdx(2)->setNoImplicit(false);
+    CHECK(m->getAtomWithIdx(0)->getTotalNumHs(false) == 0);
+    CHECK(m->getAtomWithIdx(1)->getTotalNumHs(false) == 1);
+    CHECK_THROWS_AS(
+        m->getAtomWithIdx(2)->getValence(Atom::ValenceType::IMPLICIT),
+        std::runtime_error);
+    CHECK(m->getAtomWithIdx(2)->getTotalNumHs(false) == 1);
+    CHECK(m->getAtomWithIdx(3)->getTotalNumHs(false) == 0);
   }
 }

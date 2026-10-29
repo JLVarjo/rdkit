@@ -1,5 +1,5 @@
 #
-#  Copyright (C) 2000-2025  greg Landrum and other RDKit contributors
+#  Copyright (C) 2000-2026 Greg Landrum and other RDKit contributors
 #
 #   @@ All Rights Reserved @@
 #  This file is part of the RDKit.
@@ -19,7 +19,10 @@ from rdkit.Geometry import rdGeometry
 _HasSubstructMatchStr = rdchem._HasSubstructMatchStr
 from rdkit.Chem.inchi import *
 from rdkit.Chem.rdchem import *
-from rdkit.Chem.rdCIPLabeler import *
+try:
+  from rdkit.Chem.rdCIPLabeler import *
+except ImportError:
+  pass
 from rdkit.Chem.rdmolfiles import *
 from rdkit.Chem.rdmolops import *
 
@@ -41,69 +44,71 @@ else:
     templDir += '/'
   rdCoordGen.SetDefaultTemplateFileDir(templDir)
 
+if rdBase._wrapperType == 'boost':
+  from rdkit import __vect__iter__
+  from rdkit.Chem import rdmolops
 
-# Github Issue #6208: boost::python iterators are slower than they should
-# (cause is that boost::python throws exceptions as actual C++ exceptions)
-class _GetRDKitObjIterator:
+  rdchem.StereoGroup_vect.__iter__ = __vect__iter__
+  for name, object in vars(rdmolops).items():
+    if name.startswith('_vect') and hasattr(object, '__iter__'):
+      object.__iter__ = __vect__iter__
 
-  def _sizeCalc(self):
-    raise NotImplementedError()
+  # Github Issue #6208: boost::python iterators are slower than they should
+  # (cause is that boost::python throws exceptions as actual C++ exceptions)
+  class _GetRDKitObjIterator:
 
-  def _getRDKitItem(self, i):
-    raise NotImplementedError()
+    def _sizeCalc(self):
+      raise NotImplementedError()
 
-  def __init__(self, mol):
-    self._mol = mol
-    self._pos = 0
-    self._size = self._sizeCalc()
+    def _getRDKitItem(self, i):
+      raise NotImplementedError()
 
-  def __len__(self):
-    if self._sizeCalc() != self._size:
-      raise RuntimeError('size changed during iteration')
-    return self._size
+    def __init__(self):
+      self._pos = 0
+      self._size = self._sizeCalc()
 
-  def __getitem__(self, i):
-    if i < 0 or i >= len(self):
-      raise IndexError('index out of range')
-    return self._getRDKitItem(i)
+    def __len__(self):
+      if self._sizeCalc() != self._size:
+        raise RuntimeError('size changed during iteration')
+      return self._size
 
-  def __next__(self):
-    if self._pos >= len(self):
-      raise StopIteration
+    def __getitem__(self, i):
+      if i < 0 or i >= len(self):
+        raise IndexError('index out of range')
+      return self._getRDKitItem(i)
 
-    ret = self[self._pos]
-    self._pos += 1
-    return ret
+    def __next__(self):
+      if self._pos >= len(self):
+        raise StopIteration
 
-  def __iter__(self):
-    for i in range(0, len(self)):
-      self._pos = i
-      yield self[i]
-    self._pos = self._size
+      ret = self[self._pos]
+      self._pos += 1
+      return ret
 
+    def __iter__(self):
+      for i in range(len(self)):
+        self._pos = i
+        if self._sizeCalc() != self._size:
+          raise RuntimeError('size changed during iteration')
+        yield self._getRDKitItem(i)
+        self._pos = self._size
 
-class _GetAtomsIterator(_GetRDKitObjIterator):
+  class _GetAtomsIterator(_GetRDKitObjIterator):
+    def __init__(self, mol):
+      self._sizeCalc = mol.GetNumAtoms
+      self._getRDKitItem = mol.GetAtomWithIdx
+      super().__init__()
 
-  def _sizeCalc(self):
-    return self._mol.GetNumAtoms()
+  class _GetBondsIterator(_GetRDKitObjIterator):
+    def __init__(self, mol):
+      self._sizeCalc = mol.GetNumBonds
+      self._getRDKitItem = mol.GetBondWithIdx
+      super().__init__()
 
-  def _getRDKitItem(self, i):
-    return self._mol.GetAtomWithIdx(i)
-
-
-class _GetBondsIterator(_GetRDKitObjIterator):
-
-  def _sizeCalc(self):
-    return self._mol.GetNumBonds()
-
-  def _getRDKitItem(self, i):
-    return self._mol.GetBondWithIdx(i)
-
-
-rdchem.Mol.GetAtoms = lambda self: _GetAtomsIterator(self)
-rdchem.Mol.GetAtoms.__doc__ = """returns an iterator over the atoms in the molecule"""
-rdchem.Mol.GetBonds = lambda self: _GetBondsIterator(self)
-rdchem.Mol.GetBonds.__doc__ = """returns an iterator over the bonds in the molecule"""
+  rdchem.Mol.GetAtoms = lambda self: _GetAtomsIterator(self)
+  rdchem.Mol.GetAtoms.__doc__ = """returns an iterator over the atoms in the molecule"""
+  rdchem.Mol.GetBonds = lambda self: _GetBondsIterator(self)
+  rdchem.Mol.GetBonds.__doc__ = """returns an iterator over the bonds in the molecule"""
 
 
 def QuickSmartsMatch(smi, sma, unique=True, display=False):
@@ -116,8 +121,8 @@ def QuickSmartsMatch(smi, sma, unique=True, display=False):
     - display: (optional) IGNORED
 
   Returns:
-    a list of list of the indices of the atoms in the molecule that match the SMARTS  
-  
+    a list of list of the indices of the atoms in the molecule that match the SMARTS
+
   '''
   m = MolFromSmiles(smi)
   p = MolFromSmarts(sma)
@@ -137,12 +142,12 @@ def CanonSmiles(smi, useChiral=1):
 
   '''
   m = MolFromSmiles(smi)
-  return MolToSmiles(m, useChiral)
+  return MolToSmiles(m, bool(useChiral))
 
 
 def SupplierFromFilename(fileN, delim='', **kwargs):
-  ''' A convenience function for creating a molecule supplier from a filename 
-  
+  ''' A convenience function for creating a molecule supplier from a filename
+
   Arguments:
     - fileN: the name of the file to read from
     - delim: (optional) the delimiter to use for reading the file (only for csv and txt files)
@@ -207,7 +212,7 @@ def FindMolChiralCenters(mol, force=True, includeUnassigned=False, includeCIP=Tr
     >>> Chem.FindMolChiralCenters(mol,force=True,includeUnassigned=True)
     [(1, 'S'), (3, '?')]
 
-    The handling of unassigned stereocenters for dependent stereochemistry is not correct 
+    The handling of unassigned stereocenters for dependent stereochemistry is not correct
     using the legacy implementation:
 
     >>> Chem.FindMolChiralCenters(Chem.MolFromSmiles('C1CC(C)C(C)C(C)C1'),includeUnassigned=True, useLegacyImplementation=True)
@@ -269,7 +274,7 @@ def FindMolChiralCenters(mol, force=True, includeUnassigned=False, includeCIP=Tr
             code = atm.GetProp("_CIPCode")
           else:
             if si.specified:
-              code = str(si.descriptor)
+              code = str(si.descriptor).replace("StereoDescriptor.", "")
             else:
               code = '?'
               atm.SetIntProp('_ChiralityPossible', 1)
@@ -277,3 +282,27 @@ def FindMolChiralCenters(mol, force=True, includeUnassigned=False, includeCIP=Tr
   finally:
     SetUseLegacyStereoPerception(origUseLegacyVal)
   return centers
+
+
+def MultiConfMolFromSDF(sdf, sanitize=True, removeHs=True, strictParsing=True):
+  """ A convenience function for creating a multi conformer molecule from an SD file.
+
+  This assumes that all structures in the same file are actually the same molecule.
+  
+  Arguments:
+    - sdf: the name of the file to read from
+    - sanitize: (optional) Sanitize the molecule after constructing it
+    - removeHs: (optional) Remove Hs after constructing the molecule
+    - strictParsing: (optional) If set to false, the parser is more lax about the correctness of the contents
+
+  Returns:
+    A molecule with all conformers found in the SD file.
+
+  """
+  returnMol = None
+  for mol in SDMolSupplier(sdf, sanitize=sanitize, removeHs=removeHs, strictParsing=strictParsing):
+    if returnMol is None:
+      returnMol = Mol(mol)
+      continue
+    returnMol.AddConformer(mol.GetConformer(), assignId=True)
+  return returnMol

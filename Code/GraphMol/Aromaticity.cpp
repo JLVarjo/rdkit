@@ -41,17 +41,46 @@ namespace RingUtils {
 using namespace RDKit;
 
 void pickFusedRings(int curr, const INT_INT_VECT_MAP &neighMap, INT_VECT &res,
-                    boost::dynamic_bitset<> &done, int depth) {
+                    boost::dynamic_bitset<> &done, int /* depth */) {
+  // Use an explicit DFS stack instead of recursion. Large fused systems can
+  // contain thousands of rings, which overflows the comparatively small
+  // default thread stack on Windows.
   auto pos = neighMap.find(curr);
   PRECONDITION(pos != neighMap.end(), "bad argument");
   done[curr] = 1;
   res.push_back(curr);
 
-  const auto &neighs = pos->second;
-  for (int neigh : neighs) {
-    if (!done[neigh]) {
-      pickFusedRings(neigh, neighMap, res, done, depth + 1);
+  // Each entry stores a ring index and the next neighbor to visit. Advancing
+  // neighbors one at a time preserves the preorder traversal of the old
+  // recursive implementation.
+  std::vector<std::pair<int, unsigned>> stack;
+  stack.emplace_back(curr, 0);
+  while (!stack.empty()) {
+    auto &[ringIdx, nextNeighbor] = stack.back();
+    const auto &neighs = neighMap.find(ringIdx)->second;
+    if (nextNeighbor == neighs.size()) {
+      // No more neighbors to visit for this ring
+      stack.pop_back();
+      continue;
     }
+
+    const auto neigh = neighs[nextNeighbor];
+
+    // this advances the "neighbor to visit" index in the current
+    // element in the stack (note that nextNeighbor is a reference,
+    // and that we haven't popped the stack!)
+    ++nextNeighbor;
+
+    if (done[neigh]) {
+      continue;
+    }
+
+    // We haven't seen this ring yet, so add it to the stack
+    pos = neighMap.find(neigh);
+    CHECK_INVARIANT(pos != neighMap.end(), "neighboring ring not found");
+    done[neigh] = 1;
+    res.push_back(neigh);
+    stack.emplace_back(neigh, 0);
   }
 }
 
@@ -71,8 +100,7 @@ bool checkFused(const INT_VECT &rids, INT_INT_VECT_MAP &ringNeighs) {
 
   // then pick a fused system from the remaining (i.e. rids)
   // If the rings in rids are fused we should get back all of them
-  // in fused
-  // if we get a smaller number in fused then rids are not fused
+  // in fused if we get a smaller number in fused then rids are not fused
   pickFusedRings(rids.front(), ringNeighs, fused, done);
 
   CHECK_INVARIANT(fused.size() <= rids.size(), "");
@@ -283,7 +311,6 @@ bool applyHuckel(ROMol &, const INT_VECT &ring, const VECT_EDON_TYPE &edon,
     rlw += atlw;
     rup += atup;
   }
-
   if (rup >= 6) {
     for (rie = rlw; rie <= rup; ++rie) {
       if ((rie - 2) % 4 == 0) {
@@ -403,7 +430,7 @@ void applyHuckelToFused(
       std::copy(curRs.begin(), curRs.end(),
                 std::inserter(aromRings, aromRings.begin()));
     }  // end check huckel rule
-  }  // end while(1)
+  }    // end while(1)
   narom += rdcast<int>(aromRings.size());
 }
 
@@ -654,7 +681,7 @@ int countAtomElec(const Atom *at) {
 }
 
 namespace {
-int mdlAromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
+int mdlAromaticityHelper(RWMol &mol, const RingInfo::RingsView &srings) {
   int narom = 0;
   // loop over all the atoms in the rings that can be candidates
   // for aromaticity
@@ -667,7 +694,7 @@ int mdlAromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
   VECT_EDON_TYPE edon(natoms);
 
   VECT_INT_VECT cRings;  // holder for rings that are candidates for aromaticity
-  for (auto &sring : srings) {
+  for (const auto sring : srings) {
     bool allAromatic = true;
     bool allDummy = true;
 
@@ -709,7 +736,7 @@ int mdlAromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
       }
     }
     if (allAromatic && !allDummy) {
-      cRings.push_back(sring);
+      cRings.emplace_back(sring.begin(), sring.end());
     }
   }
 
@@ -763,7 +790,7 @@ int mdlAromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
   return narom;
 }
 
-int mmff94AromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
+int mmff94AromaticityHelper(RWMol &mol, const RingInfo::RingsView &srings) {
   // set aromaticity as done in MMFF94 init
   if (!mol.hasProp(common_properties::_MMFFSanitized)) {
     bool isAromaticSet = false;
@@ -782,7 +809,7 @@ int mmff94AromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
 
   // count aromatic rings for return value
   int narom = 1;
-  for (auto &sring : srings) {
+  for (const auto sring : srings) {
     bool isAromRing = true;
     for (auto &aid : sring) {
       Atom *atom = mol.getAtomWithIdx(aid);
@@ -800,7 +827,7 @@ int mmff94AromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings) {
 }
 
 // use minRingSize=0 or maxRingSize=0 to ignore these constraints
-int aromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings,
+int aromaticityHelper(RWMol &mol, const RingInfo::RingsView &srings,
                       unsigned int minRingSize, unsigned int maxRingSize,
                       bool includeFused) {
   int narom = 0;
@@ -815,7 +842,7 @@ int aromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings,
   VECT_EDON_TYPE edon(natoms);
 
   VECT_INT_VECT cRings;  // holder for rings that are candidates for aromaticity
-  for (auto &sring : srings) {
+  for (const auto sring : srings) {
     size_t ringSz = sring.size();
     // test ring size:
     if ((minRingSize && ringSz < minRingSize) ||
@@ -839,18 +866,35 @@ int aromaticityHelper(RWMol &mol, const VECT_INT_VECT &srings,
       }
       aseen[firstIdx] = 1;
 
-      // now that the atom is part of ring check if it can donate
-      // electron or has empty orbitals. Record the donor type
-      // information in 'edon' - we will need it when we get to
-      // the Huckel rule later
-      edon[firstIdx] = getAtomDonorTypeArom(at);
-      acands[firstIdx] = isAtomCandForArom(at, edon[firstIdx]);
+      // Check if this atom can donate electrons or has empty orbitals.
+      ElectronDonorType donorType = getAtomDonorTypeArom(at);
+
+      // Fix: Prevent aliphatic ether oxygens and sulfurs in macrocycles
+      // (>= 9 members, this is what we use as the definition of macrocycle
+      // elsewhere) from being falsely flagged as aromatic. In these large
+      // rings, they act as simple bridges, not pi donors like in small rings
+      // (e.g., furan).
+      if (donorType == TwoElectronDonorType && ringSz >= 9) {
+        if ((at->getAtomicNum() == 8 || at->getAtomicNum() == 16) &&
+            at->getDegree() == 2 && at->getFormalCharge() == 0) {
+          if (std::ranges::none_of(mol.atomBonds(at), [](const Bond *bond) {
+                return bond->getBondType() == Bond::DOUBLE ||
+                       bond->getBondType() == Bond::TRIPLE;
+              })) {
+            donorType = NoElectronDonorType;
+          }
+        }
+      }
+      edon[firstIdx] = donorType;
+      acands[firstIdx] = isAtomCandForArom(at, donorType);
       if (!acands[firstIdx]) {
         allAromatic = false;
+        // we can't break out of the loop over the rest of the ring here because
+        // we still need to set edon and acands for the other atoms in the ring.
       }
     }
     if (allAromatic && !allDummy) {
-      cRings.push_back(sring);
+      cRings.emplace_back(sring.begin(), sring.end());
     }
   }
 
@@ -934,7 +978,7 @@ void setMMFFAromaticity(RWMol &mol) {
   RingInfo *ringInfo = mol.getRingInfo();
   Atom *atom;
   Bond *bond;
-  const VECT_INT_VECT &atomRings = ringInfo->atomRings();
+  const auto atomRings = ringInfo->atomRings();
   ROMol::ADJ_ITER nbrIdx;
   ROMol::ADJ_ITER endNbrs;
   boost::dynamic_bitset<> aromBitVect(mol.getNumAtoms());
@@ -1097,39 +1141,30 @@ int setAromaticity(RWMol &mol, AromaticityModel model, int (*func)(RWMol &)) {
   // with aromaticity information, assumed it is correct and
   // did not touch it. Now it ignores that information entirely.
 
-  // first find the all the simple rings in the molecule
-  VECT_INT_VECT srings;
-  if (mol.getRingInfo()->isInitialized()) {
-    srings = mol.getRingInfo()->atomRings();
-  } else {
-    MolOps::symmetrizeSSSR(mol, srings);
+  auto *ringInfo = mol.getRingInfo();
+  if (!ringInfo->isInitialized()) {
+    MolOps::symmetrizeSSSR(mol);
   }
+  const auto srings = ringInfo->atomRings();
 
-  int res;
   switch (model) {
     case AROMATICITY_DEFAULT:
     case AROMATICITY_RDKIT:
-      res = aromaticityHelper(mol, srings, 0, 0, true);
-      break;
+      return aromaticityHelper(mol, srings, 0, 0, true);
     case AROMATICITY_SIMPLE:
-      res = aromaticityHelper(mol, srings, 5, 6, false);
-      break;
+      return aromaticityHelper(mol, srings, 5, 6, false);
     case AROMATICITY_MDL:
-      res = mdlAromaticityHelper(mol, srings);
-      break;
+      return mdlAromaticityHelper(mol, srings);
     case AROMATICITY_MMFF94:
-      res = mmff94AromaticityHelper(mol, srings);
-      break;
+      return mmff94AromaticityHelper(mol, srings);
     case AROMATICITY_CUSTOM:
       PRECONDITION(
           func,
           "function must be set when aromaticity model is AROMATICITY_CUSTOM");
-      res = func(mol);
-      break;
+      return func(mol);
     default:
       throw ValueErrorException("Bad AromaticityModel");
   }
-  return res;
 }
 
 };  // end of namespace MolOps
